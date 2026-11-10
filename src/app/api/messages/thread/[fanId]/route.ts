@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
-import { getThread, markThreadRead } from "@/lib/data";
+import { getThreadPage, markThreadRead } from "@/lib/data";
 import { limitRoute } from "@/lib/api/limit";
 import { badRequest, errorResponse } from "@/lib/api/handler";
 
-// Full message history for one fan, from the creator's side (RLS-scoped).
+// One page of the conversation with one fan, from the creator's side
+// (RLS-scoped): the newest 200, or `?before=<ISO>` for the ones older than
+// that (RD-19); `?limit=1..500` sizes the page. Answers { messages, more }.
 // `?creatorId=<id>` (A19): a seat with can_act_for 'chat' for that creator.
 // Reading never changes anything (I3); marking read is the POST below.
 export async function GET(
@@ -13,11 +15,16 @@ export async function GET(
   const rateLimited = await limitRoute(req, "messages/thread/[fanId]:GET");
   if (rateLimited) return rateLimited;
   const { fanId } = await params;
-  const creatorId = new URL(req.url).searchParams.get("creatorId");
-  if (creatorId !== null && creatorId.length > 64) return badRequest();
-  const messages = await getThread(fanId, creatorId ?? undefined);
-  if ("error" in messages) return errorResponse(messages.error);
-  return NextResponse.json({ messages });
+  const url = new URL(req.url);
+  const creatorId = url.searchParams.get("creatorId");
+  const before = url.searchParams.get("before");
+  const limitRaw = url.searchParams.get("limit");
+  const limit = limitRaw === null ? undefined : Number(limitRaw);
+  if ((creatorId !== null && creatorId.length > 64) || (before !== null && before.length > 40)) return badRequest();
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 500)) return badRequest();
+  const page = await getThreadPage(fanId, creatorId ?? undefined, { before, limit });
+  if ("error" in page) return errorResponse(page.error);
+  return NextResponse.json(page);
 }
 
 // I3: mark the fan's messages read by the creator (the Inbox calls this after

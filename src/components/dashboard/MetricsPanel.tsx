@@ -62,7 +62,7 @@ export default function MetricsPanel({
 
   const stats = [
     { label: "Fans", value: m?.fans ?? 0 },
-    { label: "Revenue", value: formatCents(m?.revenue ?? 0) },
+    { label: "Tips recorded", value: formatCents(m?.revenue ?? 0) },
     { label: "Spins played", value: m?.spinsPlayed ?? 0 },
     { label: "To fulfil", value: m?.pending ?? 0 },
     { label: "Delivered", value: m?.fulfilled ?? 0 },
@@ -121,6 +121,11 @@ export default function MetricsPanel({
             />
           ))}
         </dl>
+        {/* PR-07: the daily series as a spreadsheet. */}
+        <p className="text-xs text-muted">
+          <a href={`/api/metrics/export?days=${days}`} download className="font-semibold text-brand underline-offset-2 hover:underline" data-testid="metrics-export">Download the last {days} days as CSV</a>
+          {" "}— one row per UTC day: spins and tips recorded.
+        </p>
         {overview?.gamePlays ? <dl aria-label="Plays by game" className="flex flex-wrap gap-x-5 gap-y-2 text-xs">
           <div className="flex gap-2"><dt className="text-muted">Wheel plays</dt><dd className="font-semibold tabular-nums">{overview.gamePlays.wheel.toLocaleString()}</dd></div>
           <div className="flex gap-2"><dt className="text-muted">Scratch plays</dt><dd className="font-semibold tabular-nums">{overview.gamePlays.scratch.toLocaleString()}</dd></div>
@@ -132,6 +137,8 @@ export default function MetricsPanel({
         </p>
       </section>
 
+      {/* PA-12: the cards below are h3; this names their group so no level is skipped. */}
+      <h2 className="sr-only">Trends and breakdowns</h2>
       {/* Trend row: spins, revenue and the conversion funnel (its prior spot). */}
       <div className="grid gap-[18px] md:grid-cols-2 lg:grid-cols-3">
         {/* Spins trend — the 14d/30d window drives both trend cards. */}
@@ -147,7 +154,7 @@ export default function MetricsPanel({
                     type="button"
                     onClick={() => setDays(d)}
                     aria-pressed={days === d}
-                    className={`tnum rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
+                    className={`tnum rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors max-sm:min-h-11 max-sm:px-3.5 ${
                       days === d
                         ? "bg-[var(--brand)] text-[var(--brand-ink)]"
                         : "border border-line text-muted hover:text-ink"
@@ -164,8 +171,8 @@ export default function MetricsPanel({
 
         <section className={`rounded-2xl p-5 ${raised}`}>
           <CardHeader
-            title="Revenue trend"
-            hint="Daily revenue over time."
+            title="Tips trend"
+            hint="Daily tips recorded over time."
             right={
               !extraLoading && extra ? (
                 <span className="tnum shrink-0 text-sm font-bold text-ink">
@@ -180,7 +187,7 @@ export default function MetricsPanel({
                 <Sparkline
                   data={extra.revenueTrend.map((d) => ({ date: d.date, spins: d.cents }))}
                   format={formatCents}
-                  noun="Revenue"
+                  noun="Tips"
                   color="#22c55e"
                 />
               )
@@ -193,7 +200,7 @@ export default function MetricsPanel({
 
       <div className="grid gap-[18px] lg:grid-cols-2">
         <section className={`rounded-2xl p-5 ${raised}`}>
-          <CardHeader title={<>What&rsquo;s landing</>} hint="Most-won prizes across recent spins." />
+          <CardHeader title={<>What&rsquo;s landing</>} hint="Most-won prizes across the newest 200 wins." />
           <ul className="mt-4 flex flex-col gap-[11px]">
             {topPrizes.length === 0 && <li className="text-sm text-muted">No spins yet.</li>}
             {topPrizes.map((p) => {
@@ -219,7 +226,7 @@ export default function MetricsPanel({
         </section>
 
         <section className={`rounded-2xl p-5 ${raised}`}>
-          <CardHeader title="Rarity mix" hint="How rare the wins skew." />
+          <CardHeader title="Rarity mix" hint="How rare the newest 200 wins skew." />
           {rarityMix.length === 0 ? (
             <p className="mt-4 text-sm text-muted">No wins yet.</p>
           ) : (

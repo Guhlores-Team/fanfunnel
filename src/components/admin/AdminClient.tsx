@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useState } from "react";
+import { useBuildCommit } from "./buildCommit";
 import { ACCOUNT_CLEANUP_PENDING_MESSAGE, deletionResponseState } from "@/lib/privacy/deletionResult";
 import { FEATURES } from "@/lib/features";
 import { REJECTION_REASONS, type RejectionReason } from "@/lib/onboarding/rejectionReasons";
@@ -15,8 +16,11 @@ import StuckDeletions from "./StuckDeletions";
 import RemoveCreatorPhotosButton from "./RemoveCreatorPhotosButton";
 import AdminActivity from "./AdminActivity";
 import AdminLookup from "./AdminLookup";
+import LoadFailed from "@/components/dashboard/LoadFailed";
+import { LoadError, loadFailureKind } from "@/lib/hooks/loadJson";
 import AdminReports from "./AdminReports";
-import { pendingAgeLabel, pendingAgeOverdue } from "./pendingAge";
+import AdminAgencies from "./AdminAgencies";
+import { ADMIN_ACCOUNTS_PAGE, filterAccounts, pendingAgeLabel, pendingAgeOverdue, requestAgeLabel, requestOverdue } from "./pendingAge";
 import { useNow } from "@/lib/hooks/useNow";
 
 interface PendingApp {
@@ -52,7 +56,20 @@ function initialsOf(name: string, email: string) {
  * requireAdminRoute, so a 401/403 here still shows "Admins only".
  */
 export default function AdminClient() {
+  const commit = useBuildCommit();
   const [data, setData] = useState<AdminOverview | null>(null);
+  // WG-18: search and "Show more" over the loaded accounts; `pinned` keeps an
+  // account another card jumps to (Agencies › Suspend owner) in the list.
+  const [accountQuery, setAccountQuery] = useState("");
+  const [accountsShown, setAccountsShown] = useState(ADMIN_ACCOUNTS_PAGE);
+  const [pinnedAccount, setPinnedAccount] = useState<string | null>(null);
+  // Agencies › "Suspend owner" jumps to that account's row once it is rendered.
+  useEffect(() => {
+    if (!pinnedAccount || !data) return;
+    const el = document.getElementById(`admin-account-${pinnedAccount}`);
+    el?.scrollIntoView({ block: "center" });
+    el?.querySelector<HTMLButtonElement>("button[data-suspend]")?.focus();
+  }, [pinnedAccount, data]);
   const [loading, setLoading] = useState(true);
   // "mfa": an admin whose session hasn't done two-factor (the server said
   // mfa_required); "other": not an active admin / signed out.
@@ -66,6 +83,9 @@ export default function AdminClient() {
   const [busyAccounts, setBusyAccounts] = useState<Set<string>>(new Set());
   const toast = useToast();
 
+  // RD-03: a failed read (500 / 429 / network) is a failed read with Retry,
+  // never "No creator accounts yet.".
+  const [loadError, setLoadError] = useState<unknown>(null);
   const refresh = useCallback(async () => {
     try {
       const res = await fetch("/api/admin", { cache: "no-store" });
@@ -75,19 +95,23 @@ export default function AdminClient() {
         setForbidden(body?.error === "mfa_required" ? "mfa" : "other");
         return;
       }
-      if (res.ok) setData(await res.json());
+      if (!res.ok) throw new LoadError(loadFailureKind(res.status), res.status);
+      setData(await res.json());
+      setLoadError(null);
       const ar = await fetch("/api/admin/applications", { cache: "no-store" });
-      if (ar.ok) {
-        const body = (await ar.json()) as { applications?: PendingApp[]; demo?: boolean };
-        setApps(body.applications ?? []);
-        setAppsDemo(body.demo === true);
-      }
+      if (!ar.ok) throw new LoadError(loadFailureKind(ar.status), ar.status);
+      const body = (await ar.json()) as { applications?: PendingApp[]; demo?: boolean };
+      setApps(body.applications ?? []);
+      setAppsDemo(body.demo === true);
+    } catch (e) {
+      setLoadError(e instanceof LoadError ? e : new LoadError("network"));
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; state changes only after the response arrives
     void refresh();
   }, [refresh]);
 
@@ -265,6 +289,10 @@ export default function AdminClient() {
   const pending = apps.filter((a) => a.status === "pending");
   const rejected = apps.filter((a) => a.status === "rejected");
   const accounts = data?.accounts ?? [];
+  const matchingAccounts = filterAccounts(accounts, accountQuery);
+  const pinned = pinnedAccount ? accounts.find((a) => a.id === pinnedAccount) : undefined;
+  const pageOfAccounts = matchingAccounts.slice(0, accountsShown);
+  const visibleAccounts = pinned && !pageOfAccounts.includes(pinned) ? [pinned, ...pageOfAccounts] : pageOfAccounts;
 
   return (
     <div className="flex flex-col gap-[18px]">
@@ -285,7 +313,7 @@ export default function AdminClient() {
           {tiles.map((t) => (
             <div key={t.label} className="bg-base px-[18px] py-4">
               <dd className="tnum m-0 text-[22px] font-bold leading-none tracking-[-0.02em] text-ink">
-                {loading ? <span className="text-muted">—</span> : t.value.toLocaleString()}
+                {loading || (loadError != null && !data) ? <span className="text-muted">—</span> : t.value.toLocaleString()}
               </dd>
               <dt className="mt-1.5 text-[11px] uppercase tracking-[0.04em] text-muted">{t.label}</dt>
             </div>
@@ -314,8 +342,10 @@ export default function AdminClient() {
             id="admin-accounts"
             extra={
               <span className="flex items-center gap-3">
-                {!loading && (
-                  <span className="tnum text-xs text-muted">{accounts.length} total</span>
+                {!loading && loadError == null && (
+                  <span className="tnum text-xs text-muted" data-testid="admin-accounts-count">
+                    {accountQuery.trim() ? `${matchingAccounts.length} of ${accounts.length}` : `${accounts.length} total`}
+                  </span>
                 )}
                 <button
                   type="button"
@@ -336,25 +366,57 @@ export default function AdminClient() {
                 <div key={i} className="skeleton h-[66px] border-b border-[#1f1b27] last:border-b-0" />
               ))}
             </div>
+          ) : loadError != null ? (
+            <div className="px-[18px] py-6">
+              <LoadFailed error={loadError} what="the creator accounts" onRetry={refresh} testId="admin-load-failed" />
+            </div>
           ) : accounts.length === 0 ? (
             <p className="px-[18px] py-8 text-center text-[13.5px] text-muted">No creator accounts yet.</p>
           ) : (
-            <ul>
-              {accounts.map((a) => (
-                <AccountRow
-                  key={a.id}
-                  account={a}
-                  onPatch={patchAccount}
-                  onDelete={deleteAccount}
-                  onResetTwoFactor={resetTwoFactor}
-                  busy={busyAccounts.has(a.id)}
-                />
-              ))}
-            </ul>
+            <>
+              <div className="border-b border-[#1f1b27] px-[18px] py-3">
+                <label className="block text-xs text-muted">
+                  Search accounts
+                  <input
+                    type="search"
+                    value={accountQuery}
+                    onChange={(e) => { setAccountQuery(e.target.value); setAccountsShown(ADMIN_ACCOUNTS_PAGE); }}
+                    placeholder="Name or e-mail"
+                    data-testid="admin-accounts-search"
+                    className="ff-input mt-1 w-full sm:max-w-sm"
+                  />
+                </label>
+              </div>
+              {matchingAccounts.length === 0 && !pinned ? (
+                <p className="px-[18px] py-8 text-center text-[13.5px] text-muted" data-testid="admin-accounts-none">No account matches that search.</p>
+              ) : (
+                <ul>
+                  {visibleAccounts.map((a) => (
+                    <AccountRow
+                      key={a.id}
+                      account={a}
+                      onPatch={patchAccount}
+                      onDelete={deleteAccount}
+                      onResetTwoFactor={resetTwoFactor}
+                      busy={busyAccounts.has(a.id)}
+                    />
+                  ))}
+                </ul>
+              )}
+              {matchingAccounts.length > accountsShown && (
+                <div className="flex items-center justify-center gap-3 border-t border-[#1f1b27] px-[18px] py-3">
+                  <span className="tnum text-xs text-muted">Showing {Math.min(accountsShown, matchingAccounts.length)} of {matchingAccounts.length}</span>
+                  <button type="button" data-testid="admin-accounts-more" onClick={() => setAccountsShown((n) => n + ADMIN_ACCOUNTS_PAGE)} className={`${btnGhost} min-h-9 px-3 text-[13px]`}>
+                    Show {Math.min(ADMIN_ACCOUNTS_PAGE, matchingAccounts.length - accountsShown)} more
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </section>
 
-        <SystemHealthCard />
+        <AdminAgencies onSuspendOwner={(id) => setPinnedAccount(id)} />
+        <SystemHealthCard commit={commit} />
         <AdminLookup />
         <StuckDeletions />
         <AdminErrors />
@@ -393,11 +455,26 @@ function AccountRow({
 }) {
   const [confirmingReset, setConfirmingReset] = useState(false);
   // C11: suspending and making someone an admin each ask first.
-  const [confirming, setConfirming] = useState<null | "suspend" | "admin">(null);
+  const [confirming, setConfirming] = useState<null | "suspend" | "admin" | "reactivate" | "demote">(null);
   const confirmId = useId();
   const [resetting, setResetting] = useState(false);
   const [open, setOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // WG-04: what deleting an agency owner ends (read when the confirm opens).
+  const [agencyImpact, setAgencyImpact] = useState<{ name: string; seats: number; creators: number } | null>(null);
+  useEffect(() => {
+    if (!confirmingDelete) return;
+    let live = true;
+    fetch("/api/admin/agencies", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { agencies?: { name: string; owner: { id: string } | null; seats: unknown[]; creators: unknown[] }[] } | null) => {
+        if (!live) return;
+        const own = d?.agencies?.find((a) => a.owner?.id === account.id) ?? null;
+        setAgencyImpact(own ? { name: own.name, seats: own.seats.length, creators: own.creators.length } : null);
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [confirmingDelete, account.id]);
   const [typedEmail, setTypedEmail] = useState("");
   const [deleting, setDeleting] = useState(false);
   const detailsId = useId();
@@ -434,6 +511,7 @@ function AccountRow({
 
   return (
     <li
+      id={`admin-account-${account.id}`}
       className={`border-b border-[#1f1b27] last:border-b-0 ${
         account.isActive ? "" : "bg-[color-mix(in_oklab,#ef4444_4%,transparent)]"
       }`}
@@ -487,10 +565,11 @@ function AccountRow({
         <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
-            onClick={() => (account.isActive ? setConfirming("suspend") : onPatch(account.id, { isActive: true }))}
+            onClick={() => setConfirming(account.isActive ? "suspend" : "reactivate")}
+            data-suspend=""
             disabled={busy}
-            aria-controls={account.isActive ? confirmId : undefined}
-            aria-expanded={account.isActive ? confirming === "suspend" : undefined}
+            aria-controls={confirmId}
+            aria-expanded={confirming === "suspend" || confirming === "reactivate"}
             className={account.isActive ? btnGhost : `${btnGhost} border-[#10b981]/40 text-[#6ee7b7]`}
           >
             {account.isActive ? "Suspend" : "Reactivate"}
@@ -515,7 +594,7 @@ function AccountRow({
             aria-expanded={open}
             aria-controls={detailsId}
             aria-label={`${open ? "Hide" : "Show"} role and features for ${account.displayName}`}
-            className="grid h-8 w-8 place-items-center rounded-lg border border-line text-muted transition-colors hover:text-ink"
+            className="grid h-8 w-8 place-items-center rounded-lg border border-line text-muted transition-colors hover:text-ink max-sm:h-11 max-sm:w-11"
           >
             <Glyph d={P.chevron} size={16} className={`transition-transform ${open ? "rotate-180" : ""}`} />
           </button>
@@ -523,13 +602,23 @@ function AccountRow({
       </div>
 
       {confirming && (
-        <div id={confirmId} role="group" aria-label={confirming === "suspend" ? `Confirm suspending ${account.displayName}` : `Confirm making ${account.displayName} an admin`} className="px-4 pb-3.5 sm:px-[18px]">
+        <div id={confirmId} role="group" aria-label={confirming === "suspend" ? `Confirm suspending ${account.displayName}` : confirming === "reactivate" ? `Confirm reactivating ${account.displayName}` : confirming === "demote" ? `Confirm removing admin from ${account.displayName}` : `Confirm making ${account.displayName} an admin`} className="px-4 pb-3.5 sm:px-[18px]">
           <div className="rounded-[11px] border border-[#f59e0b]/35 bg-[#f59e0b]/10 p-3.5 text-xs leading-relaxed text-[#fde68a]">
             {confirming === "suspend" ? (
               <p>
-                Suspend <strong className="text-ink">{account.displayName}</strong>? They can still sign in and see their
-                dashboard, but can&rsquo;t change anything, and their games stop working for fans until you reactivate them.
-                They&rsquo;ll see a notice with the support address.
+                Suspend <strong className="text-ink">{account.displayName}</strong>? Their games and fan links stop working
+                for fans, and they can&rsquo;t change anything, until you reactivate them. They&rsquo;ll see a notice with the
+                support address when they sign in. If they run an agency, every seat in it is paused too.
+              </p>
+            ) : confirming === "reactivate" ? (
+              <p>
+                Reactivate <strong className="text-ink">{account.displayName}</strong>? Their games and fan links work again
+                right away, and any agency seats they hold or own resume.
+              </p>
+            ) : confirming === "demote" ? (
+              <p>
+                Remove admin from <strong className="text-ink">{account.displayName}</strong>? They keep their creator
+                account but can no longer see or change other accounts, approve requests or read the activity log.
               </p>
             ) : (
               <p>
@@ -542,12 +631,12 @@ function AccountRow({
                 type="button"
                 disabled={busy}
                 onClick={() => {
-                  onPatch(account.id, confirming === "suspend" ? { isActive: false } : { role: "admin" });
+                  onPatch(account.id, confirming === "suspend" ? { isActive: false } : confirming === "reactivate" ? { isActive: true } : confirming === "demote" ? { role: "creator" } : { role: "admin" });
                   setConfirming(null);
                 }}
-                className={btnDanger}
+                className={confirming === "reactivate" ? `${btnGhost} border-[#10b981]/40 text-[#6ee7b7]` : btnDanger}
               >
-                {confirming === "suspend" ? "Yes, suspend" : "Yes, make admin"}
+                {confirming === "suspend" ? "Yes, suspend" : confirming === "reactivate" ? "Yes, reactivate" : confirming === "demote" ? "Yes, remove admin" : "Yes, make admin"}
               </button>
               <button type="button" onClick={() => setConfirming(null)} className={btnGhost}>
                 Cancel
@@ -570,8 +659,8 @@ function AccountRow({
                 disabled={busy}
                 onChange={(e) => {
                   const role = e.target.value as AppRole;
-                  if (role === "admin") setConfirming("admin");
-                  else onPatch(account.id, { role });
+                  // WG-12: both directions change power; both ask first.
+                  setConfirming(role === "admin" ? "admin" : "demote");
                 }}
               >
                 <option value="creator">Creator</option>
@@ -673,8 +762,15 @@ function AccountRow({
               <p className="text-xs leading-relaxed text-[#fecaca]">
                 This permanently deletes <strong className="text-ink">{account.displayName}</strong> and all
                 of their wheels, fans, spins, grants, campaigns and messages. This{" "}
-                <strong className="text-ink">cannot be undone</strong>. Type{" "}
-                <strong className="break-all text-ink">{account.email}</strong> to confirm:
+                <strong className="text-ink">cannot be undone</strong>.
+                {agencyImpact && (
+                  <>
+                    {" "}They own the agency <strong className="text-ink">{agencyImpact.name}</strong>: deleting them dissolves it, ending{" "}
+                    {agencyImpact.seats} {agencyImpact.seats === 1 ? "seat" : "seats"} and the management of {agencyImpact.creators}{" "}
+                    {agencyImpact.creators === 1 ? "creator" : "creators"} (they&rsquo;ll be told).
+                  </>
+                )}{" "}
+                Type <strong className="break-all text-ink">{account.email}</strong> to confirm:
               </p>
             </div>
             <input
@@ -826,7 +922,10 @@ function AccessRequests({
 }) {
   const [view, setView] = useState<"pending" | "rejected">("pending");
   const [rejecting, setRejecting] = useState<string | null>(null);
+  // WG-12: approving opens an account for fans; it asks first.
+  const [approving, setApproving] = useState<string | null>(null);
   const [reason, setReason] = useState<RejectionReason | "">("");
+  const now = useNow(60_000);
   const list = view === "pending" ? pending : rejected;
   const tab = (v: "pending" | "rejected", label: string, n: number) => (
     <button
@@ -881,8 +980,10 @@ function AccessRequests({
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[14px] font-semibold text-ink">{name}</p>
                       {a.email && <p className="truncate text-[12.5px] text-muted">{a.email}</p>}
-                      <p className="mt-1 text-xs text-muted">
+                      <p className="mt-1 text-xs text-muted" data-testid="request-age" data-overdue={view === "pending" && requestOverdue(a.createdAt, now) ? "true" : "false"}>
                         Asked {new Date(a.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
+                        {requestAgeLabel(a.createdAt, now) && <> · {requestAgeLabel(a.createdAt, now)}</>}
+                        {view === "pending" && requestOverdue(a.createdAt, now) && <span className="ml-1.5 rounded-full border border-amber-300/40 px-1.5 py-[1px] font-semibold text-amber-200">Waiting over a week</span>}
                       </p>
                       {a.audienceSize && <p className="mt-1 text-xs text-muted">Audience: {a.audienceSize}</p>}
                       {a.socials && <p className="mt-1 break-words text-xs text-muted">Links: {a.socials}</p>}
@@ -892,9 +993,10 @@ function AccessRequests({
                   <div className="flex shrink-0 gap-2 pl-12 sm:pl-0">
                     <button
                       type="button"
-                      onClick={() => onDecide(a.profileId, "approved")}
+                      onClick={() => { setApproving(a.profileId); setRejecting(null); }}
                       disabled={busy}
-                      className="btn-brand inline-flex min-h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-bold"
+                      aria-expanded={approving === a.profileId}
+                      className="btn-brand inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-bold"
                     >
                       <Glyph d={P.check} size={14} />
                       {view === "rejected" ? "Approve instead" : "Approve"}
@@ -916,6 +1018,29 @@ function AccessRequests({
                     )}
                   </div>
                 </div>
+                {approving === a.profileId && (
+                  <div data-testid="confirm-approve" className="rounded-[11px] border border-[#10b981]/35 bg-[#10b981]/10 p-3.5" role="group" aria-label={`Confirm approving ${name}`}>
+                    <p className="text-xs leading-relaxed text-[#a7f3d0]">
+                      Approve <strong className="text-ink">{name}</strong>? Their dashboard opens, they can create games and mint fan
+                      links right away, and they get an approval notice{a.email ? " and e-mail" : ""}.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={async () => {
+                          if (await onDecide(a.profileId, "approved")) setApproving(null);
+                        }}
+                        className="btn-brand inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-bold"
+                      >
+                        Yes, approve
+                      </button>
+                      <button type="button" onClick={() => setApproving(null)} className={btnGhost}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {confirmingReject && (
                   <div className="rounded-[11px] border border-[#ef4444]/35 bg-[#ef4444]/10 p-3.5" role="group" aria-label={`Confirm rejecting ${name}`}>
                     <p className="text-xs leading-relaxed text-[#fecaca]">

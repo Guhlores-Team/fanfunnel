@@ -85,7 +85,9 @@ export function reorder<T>(list: T[], from: number, to: number): T[] {
 export function newPrize(): Prize {
   return {
     id: "p" + Math.random().toString(36).slice(2, 8),
-    label: "New prize",
+    // WC-10: unnamed until the creator names it; the editor refuses to save a
+    // prize with no name, so "New prize" can never reach a fan.
+    label: "",
     rarity: "uncommon",
     weight: RARITY_DEFAULT_WEIGHT.uncommon,
     emoji: "🎁",

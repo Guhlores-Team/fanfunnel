@@ -1,3 +1,6 @@
+import { actorNames } from "./actorNames";
+import { creatorSummary } from "./creatorSummaries";
+import { heatmapFromSummary, metricsFromSummary } from "./analyticsSummary";
 import { CompleteReadError, readScopedRows, visitScopedRows } from "./readPages";
 import { readGamePlayCounts } from "./gameAnalytics";
 import { focusTag } from "./focusTag";
@@ -63,7 +66,7 @@ export async function getOverview(): Promise<CreatorOverview> {
     sb
       .from("redemptions")
       .select(
-        `id, status, created_at, notes, due_at,
+        `id, status, created_at, notes, due_at, actor_id,
        spin:spins(pool_snapshot, fair_trace, prize_label, prize_rarity, fan:fans(id, display_name, handle), reward:spin_rewards(kind, views, last_viewed_at))`
       )
       .eq("creator_id", user.id)
@@ -117,6 +120,7 @@ export async function getOverview(): Promise<CreatorOverview> {
     created_at: string;
     notes: string | null;
     due_at: string | null;
+    actor_id?: string | null;
     spin: {
       pool_snapshot?: unknown;
       fair_trace?: unknown;
@@ -128,8 +132,13 @@ export async function getOverview(): Promise<CreatorOverview> {
     } | null;
   }[];
 
+  // WG-07: a prize whose status a team member changed says who (the session
+  // is the creator itself, so its own team's names may be read).
+  const staffMoves = rows.filter((r) => r.status !== "pending" && r.actor_id && r.actor_id !== user.id);
+  const actors = staffMoves.length ? await actorNames(user.id, staffMoves.map((r) => r.actor_id)) : null;
   const redemptions: RedemptionItem[] = rows.map((r) => ({
     id: r.id,
+    ...(r.status !== "pending" && r.actor_id && actors?.get(r.actor_id) ? { via: actors.get(r.actor_id) } : {}),
     ...(r.spin?.fan?.id ? { fanId: r.spin.fan.id } : {}),
     fanName: r.spin?.fan?.display_name ?? r.spin?.fan?.handle ?? "Fan",
     prizeLabel: r.spin?.prize_label ?? "Prize",
@@ -208,6 +217,13 @@ export async function getMetricsExtra(
       activeFans: { thisWeek: 0, lastWeek: 0 },
     };
   }
+
+  // PA-03: one SQL aggregate (0073) instead of reading every row; the row
+  // reads below remain for a database without it.
+  const summary = await creatorSummary(sb, user.id, "view", "creator_analytics_summary", { p_days: n });
+  if (summary.status === "error") throw new CompleteReadError();
+  const fromSummary = summary.status === "ok" ? metricsFromSummary(summary.data, n, new Date(cutoff)) : null;
+  if (fromSummary) return fromSummary;
 
   const since = new Date(Date.parse(cutoff) - n * 24 * 60 * 60 * 1000).toISOString();
   // Weekly-active fans needs the last 14 days (this week + last week) of spins
@@ -298,6 +314,12 @@ export async function getEngagementHeatmap(
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return empty;
+
+  // PA-03: the hour-of-week grid comes from the SQL aggregate when it exists.
+  const summary = await creatorSummary(sb, user.id, "view", "creator_analytics_summary", { p_days: n });
+  if (summary.status === "error") throw new CompleteReadError();
+  const fromSummary = summary.status === "ok" ? heatmapFromSummary(summary.data) : null;
+  if (fromSummary) return fromSummary;
 
   const since = new Date(Date.parse(cutoff) - n * 24 * 60 * 60 * 1000).toISOString();
   const spinRows = await readScopedRows<{ created_at: string }>(sb, "spins", "created_at", q => q.eq("creator_id", user.id).eq("kind", "play").gte("created_at", since), cutoff);

@@ -144,6 +144,7 @@ async function legacyCampaignStats(sb: Sb, userId: string): Promise<CampaignStat
       const spinsPlayed = spins.length;
       const spinIds = spins.map((s) => s.id);
       let fulfilled = 0;
+      let pending = 0;
       if (spinIds.length > 0) {
         const { count } = await sb
           .from("redemptions")
@@ -151,6 +152,13 @@ async function legacyCampaignStats(sb: Sb, userId: string): Promise<CampaignStat
           .eq("status", "fulfilled")
           .in("spin_id", spinIds);
         fulfilled = count ?? 0;
+        // RD-07: owed = pending + in progress (a cancelled win is resolved).
+        const { data: owed } = await sb
+          .from("redemptions")
+          .select("status")
+          .in("status", ["pending", "in_progress"])
+          .in("spin_id", spinIds);
+        pending = (owed ?? []).length;
       }
       const counts = new Map<string, { label: string; rarity: Rarity; count: number }>();
       for (const s of spins) {
@@ -169,7 +177,7 @@ async function legacyCampaignStats(sb: Sb, userId: string): Promise<CampaignStat
         spinsPlayed,
         uniqueFans,
         fulfilled,
-        pending: Math.max(0, spinsPlayed - fulfilled),
+        pending,
         playThroughPct: spinsBought > 0 ? spinsPlayed / spinsBought : 0,
         revenue,
         arpu,
@@ -233,6 +241,7 @@ function fixture(): Db {
     red("s001", ME, "fulfilled"),
     red("s003", ME, "fulfilled"),
     red("s004", ME, "pending"),
+    red("s002", ME, "cancelled"), // RD-07: a cancelled win is not owed
     red("s005", ME, "fulfilled"),
     red("s007", ME, "fulfilled"), // uncategorized spin
     red("s008", OTHER, "fulfilled"),
@@ -260,7 +269,7 @@ async function main() {
   check("c1 arpu rounds 916.5 -> 917", c1.arpu === 917);
   check("c1 spinsPlayed 4", c1.spinsPlayed === 4);
   check("c1 fulfilled 2 (pending redemption not counted)", c1.fulfilled === 2);
-  check("c1 pending 2", c1.pending === 2);
+  check("c1 pending 1 (the cancelled win is resolved, RD-07)", c1.pending === 1);
   check("c1 top prize Sticker x3", c1.topPrize?.label === "Sticker" && c1.topPrize.count === 3);
   const c2 = byName["Summer"];
   check("c2 tie goes to the first prize seen", c2.topPrize?.label === "Video" && c2.topPrize.count === 1);
@@ -271,8 +280,8 @@ async function main() {
   check("bought-but-unplayed campaign", c4.spinsBought === 7 && c4.spinsPlayed === 0 && c4.playThroughPct === 0);
 
   // 2. Query count: legacy grows with campaigns, batched does not.
-  // legacy = 1 campaigns + 2 per campaign + 1 per campaign that has spins.
-  check(`legacy issued 1 + 2*4 + 2 = 11 queries (got ${before.log.length})`, before.log.length === 11);
+  // legacy = 1 campaigns + 2 per campaign + 2 per campaign that has spins (fulfilled + owed).
+  check(`legacy issued 1 + 2*4 + 2*2 = 13 queries (got ${before.log.length})`, before.log.length === 13);
   check(`batched issued 4 queries (got ${after.log.length})`, after.log.length === 4);
   check(
     "batched reads each table once",
@@ -291,7 +300,7 @@ async function main() {
   assert.deepStrictEqual(await campaignStatsFor(bigBatched.client, ME), await legacyCampaignStats(bigLegacy.client, ME));
   check("44 campaigns: batched equals legacy", true);
   check(`44 campaigns: batched still 4 queries (got ${bigBatched.log.length})`, bigBatched.log.length === 4);
-  check(`44 campaigns: legacy ${bigLegacy.log.length} queries`, bigLegacy.log.length === 1 + 2 * 44 + 42);
+  check(`44 campaigns: legacy ${bigLegacy.log.length} queries`, bigLegacy.log.length === 1 + 2 * 44 + 2 * 42);
 
   // 4. Batching must not lose rows to the PostgREST row cap: with max_rows=4
   //    and matching pages, every row is still read (via extra pages). The

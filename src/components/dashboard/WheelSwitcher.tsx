@@ -14,6 +14,8 @@ import { formatWhen, isPlayableGame, scheduleTakeover } from "@/lib/games/liveGa
 import { KindBadge, GameName } from "./GameChoice";
 import { campaignsUsing, liveExplanation, type ChoiceCampaign } from "./gameAssignment";
 import { scheduleHint } from "./scheduleHint";
+import { abandonedEmptyGame, emptyGameNotice } from "./emptyGame";
+import { useTimeZone, zoneHint } from "@/lib/localTime";
 
 type GameSummary = WheelSummary & { gameKind?: GameKind; gameReady?: boolean };
 
@@ -48,6 +50,22 @@ export default function WheelSwitcher({
   onOpenCampaigns?: () => void;
 }) {
   const toast = useToast();
+  // PR-04: "Ask to enable" for a locked game type.
+  const requestUnlock = useCallback(async (game: "scratch" | "bingo"): Promise<"sent" | "already" | "failed"> => {
+    try {
+      const res = await fetch("/api/me/game-unlock", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ game }) });
+      const body = (await res.json().catch(() => ({}))) as { already?: boolean; error?: string };
+      if (!res.ok) {
+        toast(body.error === "already_enabled" ? "That game is already enabled — close and reopen New game." : "Couldn't send the request. Try again.", { tone: "error" });
+        return "failed";
+      }
+      toast(body.already ? "Already asked — it's with the team." : "Asked. The team will enable it for your account.", { tone: "success" });
+      return body.already ? "already" : "sent";
+    } catch {
+      toast("Couldn't send the request. Check your connection and try again.", { tone: "error" });
+      return "failed";
+    }
+  }, [toast]);
   const [wheels, setWheels] = useState<GameSummary[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
@@ -65,6 +83,7 @@ export default function WheelSwitcher({
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   // Local edits to the selected wheel's schedule inputs.
   const [from, setFrom] = useState("");
+  const zone = useTimeZone();
   const [until, setUntil] = useState("");
   // Which chip's "Manage" menu is open.
   const [menuFor, setMenuFor] = useState<string | null>(null);
@@ -116,6 +135,45 @@ export default function WheelSwitcher({
   const selectedCampaigns = selected && campaigns ? campaignsUsing(selected.id, campaigns) : [];
   const scheduleDirty = from !== toLocalInput(selected?.activeFrom ?? null) || until !== toLocalInput(selected?.activeUntil ?? null);
   useCreatorDraft("game-management", "this game schedule", scheduleDirty, busy);
+  // WC-09: a game created here and left without a single prize is pointed out,
+  // with a one-tap removal, instead of lingering as a nameless empty draft.
+  const freshGameRef = useRef<string | null>(null);
+  const offerEmptyGameRemoval = useCallback(async (currentId: string | null) => {
+    const freshId = freshGameRef.current;
+    if (!freshId || freshId === currentId) return;
+    freshGameRef.current = null;
+    const res = await fetch("/api/wheels?archived=1", { cache: "no-store" }).catch(() => null);
+    if (!res?.ok) return;
+    const data = (await res.json().catch(() => null)) as { wheels?: GameSummary[] } | null;
+    const game = abandonedEmptyGame(freshId, currentId, data?.wheels ?? []);
+    if (!game) return;
+    toast(emptyGameNotice(game.title), {
+      tone: "info",
+      duration: 8000,
+      key: `empty-game:${game.id}`,
+      action: {
+        label: "Remove it",
+        onClick: () => {
+          void (async () => {
+            const gone = await fetch(`/api/wheels/${game.id}?hard=1`, { method: "DELETE" }).catch(() => null);
+            if (gone?.ok) toast(`Removed "${game.title}".`, { tone: "success" });
+            else toast("Couldn't remove that game. You can delete it from its Manage menu.", { tone: "error" });
+            await load().catch(() => {});
+            onChanged?.();
+          })();
+        },
+      },
+    });
+  }, [toast, load, onChanged]);
+  useEffect(() => {
+    void offerEmptyGameRemoval(currentWheelId);
+  }, [currentWheelId, offerEmptyGameRemoval]);
+  const offerRef = useRef(offerEmptyGameRemoval);
+  useEffect(() => {
+    offerRef.current = offerEmptyGameRemoval;
+  }, [offerEmptyGameRemoval]);
+  // Leaving the Games section counts as leaving the game.
+  useEffect(() => () => void offerRef.current(null), []);
   function openGame(id: string) {
     leave(() => { setFrom(toLocalInput(selected?.activeFrom ?? null)); setUntil(toLocalInput(selected?.activeUntil ?? null)); void onEdit(id); }, { scope: "game-management", consequence: "Switching games discards the unsaved schedule. It does not undo a request already sent." });
   }
@@ -190,7 +248,8 @@ export default function WheelSwitcher({
       toast(gameKind === "bingo" ? "Inactive bingo draft created" : "Game created", { tone: "success" });
       setNewOpen(false);
       await load();
-      await onEdit(data.wheel.id);
+      const opened = await onEdit(data.wheel.id);
+      if (opened !== false) freshGameRef.current = data.wheel.id;
       onChanged?.();
     } catch {
       setNewError("The result couldn't be confirmed. Close this form and check the game list before creating another.");
@@ -232,8 +291,29 @@ export default function WheelSwitcher({
     }
   }
 
+  // WC-03: "Set active" changes what every fan plays at once, so it asks
+  // first (naming the game that goes inactive) and offers Undo afterwards.
+  const [confirmActivate, setConfirmActivate] = useState<string | null>(null);
+  const activateKeepRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (confirmActivate) activateKeepRef.current?.focus(); }, [confirmActivate]);
+  function askSetActive(id: string) {
+    const previous = visibleWheels?.find((w) => w.isActive && w.id !== id) ?? null;
+    if (!previous) { void setActive(id); return; }
+    setConfirmActivate(id);
+  }
   async function setActive(id: string) {
-    await patchWheel(id, { isActive: true }, "Game set active");
+    const previous = visibleWheels?.find((w) => w.isActive && w.id !== id) ?? null;
+    const target = visibleWheels?.find((w) => w.id === id) ?? null;
+    setConfirmActivate(null);
+    const ok = await patchWheel(id, { isActive: true }, previous ? `${target?.title ?? "Game"} is live for all fans. ${previous.title} is inactive.` : "Game set active");
+    if (ok && previous) {
+      toast(`${target?.title ?? "This game"} is now live for every fan link without its own game.`, {
+        tone: "success",
+        duration: 8000,
+        key: "set-active",
+        action: { label: `Undo (back to ${previous.title})`, onClick: () => void patchWheel(previous.id, { isActive: true }, `${previous.title} is live again`) },
+      });
+    }
   }
 
   async function restore(id: string) {
@@ -349,7 +429,7 @@ export default function WheelSwitcher({
   return (
     <section aria-label="Game switcher">
       {loadError && <p role="alert" className="mb-2 text-xs text-amber-200">{loadError} <button type="button" className="font-semibold underline" disabled={busy} onClick={() => void load().catch(() => setLoadError("Saved games still couldn't load."))}>Check games again</button></p>}
-      {newOpen && <NewGameDialog features={features} busy={busy} error={newError} onClose={() => { setNewOpen(false); setNewError(""); }} onCreate={(kind, name) => leave(() => { setFrom(toLocalInput(selected?.activeFrom ?? null)); setUntil(toLocalInput(selected?.activeUntil ?? null)); void createWheel(kind, name); }, { scope: "game-management", consequence: "Creating a game discards this unsaved schedule. Existing game prize edits are kept until you choose whether to open the new game." })} />}
+      {newOpen && <NewGameDialog features={features} busy={busy} error={newError} onRequestUnlock={requestUnlock} onClose={() => { setNewOpen(false); setNewError(""); }} onCreate={(kind, name) => leave(() => { setFrom(toLocalInput(selected?.activeFrom ?? null)); setUntil(toLocalInput(selected?.activeUntil ?? null)); void createWheel(kind, name); }, { scope: "game-management", consequence: "Creating a game discards this unsaved schedule. Existing game prize edits are kept until you choose whether to open the new game." })} />}
       {takeover && selected && (
         <Modal
           onClose={() => setTakeover(null)}
@@ -429,7 +509,7 @@ export default function WheelSwitcher({
               return (
                 <div
                   key={w.id}
-                  className={`relative inline-flex min-h-[34px] items-center rounded-full border pl-3.5 pr-1 text-[13px] font-semibold transition-colors duration-150 ${
+                  className={`relative inline-flex min-h-[34px] min-w-0 max-w-full items-center rounded-full border pl-3.5 pr-1 text-[13px] font-semibold transition-colors duration-150 ${
                     current
                       ? "border-[color-mix(in_oklab,var(--brand)_45%,transparent)] bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] text-ink"
                       : "border-[var(--hair)] text-muted hover:border-[color-mix(in_oklab,var(--brand)_35%,var(--hair))] hover:text-ink"
@@ -441,14 +521,14 @@ export default function WheelSwitcher({
                     disabled={busy}
                     aria-current={current ? "true" : undefined}
                     title={hint}
-                    className="flex min-h-[32px] max-w-[300px] items-center gap-2 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                    className="flex min-h-[32px] min-w-0 max-w-[300px] shrink items-center gap-2 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
                   >
                     <span
                       aria-hidden="true"
                       className="h-2 w-2 shrink-0 rounded-full"
                       style={{ backgroundColor: w.brandColor }}
                     />
-                    <span className="truncate">{w.title}</span>
+                    <span className="min-w-0 truncate">{w.title}</span>
                     <KindBadge kind={w.gameKind} />
                     {live?.game.id === w.id && (
                       <span className="shrink-0 rounded-full border border-[color-mix(in_oklab,var(--brand)_45%,transparent)] px-1.5 py-px text-[9.5px] font-bold uppercase tracking-wide text-ink">
@@ -472,11 +552,12 @@ export default function WheelSwitcher({
                   {!w.isActive && !w.archivedAt && w.gameReady !== false && (
                     <button
                       type="button"
-                      onClick={() => setActive(w.id)}
+                      onClick={() => askSetActive(w.id)}
                       disabled={busy || w.prizeCount < MIN_WHEEL_PRIZES || !canCreateGame(w.gameKind ?? "wheel", features)}
                       title={w.prizeCount < MIN_WHEEL_PRIZES ? `Save at least ${MIN_WHEEL_PRIZES} prizes before activating this game.` : !canCreateGame(w.gameKind ?? "wheel", features) ? "Ask your admin to enable this game type before activating it." : undefined}
                       aria-label={`Set ${w.title} active`}
-                      className="ml-1.5 shrink-0 rounded-full border border-[color-mix(in_oklab,var(--brand)_45%,transparent)] px-2 py-px text-[10.5px] font-bold uppercase tracking-wide text-brand transition-colors hover:bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-50"
+                      aria-expanded={confirmActivate === w.id}
+                      className="ml-1 inline-flex min-h-11 shrink-0 items-center rounded-full border border-[color-mix(in_oklab,var(--brand)_45%,transparent)] px-3 text-[11px] font-bold uppercase tracking-wide text-brand transition-colors hover:bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-50"
                     >
                       Set active
                     </button>
@@ -497,7 +578,7 @@ export default function WheelSwitcher({
                     aria-expanded={open}
                     aria-label={`Manage ${w.title}`}
                     title="Manage game"
-                    className="ml-1 grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                    className="ml-1 grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted max-sm:h-10 max-sm:w-10 transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
                   >
                     <Icon d="M5 12h.01M12 12h.01M19 12h.01" size={15} />
                   </button>
@@ -639,6 +720,20 @@ export default function WheelSwitcher({
           New game
         </button>
       </div>
+      {confirmActivate && (() => {
+        const target = visibleWheels?.find((w) => w.id === confirmActivate);
+        const previous = visibleWheels?.find((w) => w.isActive && w.id !== confirmActivate);
+        if (!target) return null;
+        return (
+          <div role="group" aria-label="Confirm the live game change" data-testid="confirm-set-active" className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-300/40 bg-amber-400/5 px-3.5 py-3 text-[13px] text-ink">
+            <p className="min-w-0 flex-1 basis-60 text-pretty">
+              Make <strong>{target.title}</strong> live for all fans?{previous ? <> <strong>{previous.title}</strong> goes inactive; fans with spins left play {target.title} next.</> : null}
+            </p>
+            <button type="button" onClick={() => void setActive(target.id)} disabled={busy} className="btn-brand min-h-10 rounded-lg px-3.5 text-[12.5px] font-bold">Make it live</button>
+            <button ref={activateKeepRef} type="button" onClick={() => setConfirmActivate(null)} className="min-h-10 rounded-lg border border-line px-3.5 text-[12.5px] font-semibold text-muted hover:text-ink">{previous ? `Keep ${previous.title}` : "Cancel"}</button>
+          </div>
+        );
+      })()}
       {wheels !== null && wheels.length === 0 && (
         <p className="mt-2 text-sm text-muted">No games yet. Create one to get started.</p>
       )}
@@ -651,11 +746,11 @@ export default function WheelSwitcher({
           className="mt-3 rounded-xl border border-[var(--hair)] p-3.5 [background:var(--s2)]"
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h4 className="flex min-w-0 items-center gap-2 text-sm font-bold text-ink">
+            <h2 className="flex min-w-0 items-center gap-2 text-sm font-bold text-ink">
               <span aria-hidden="true" className="h-3.5 w-[3px] shrink-0 rounded-sm bg-[var(--brand)]" />
               Schedule
               <span className="min-w-0 truncate text-xs font-medium text-muted">{selected.title}</span>
-            </h4>
+            </h2>
             <span className="tnum text-xs text-muted">
               {scheduleHint(selected.activeFrom, selected.activeUntil, selected.isActive, live?.game.id === selected.id ? null : live?.game.title ?? null)}
             </span>
@@ -663,7 +758,7 @@ export default function WheelSwitcher({
           {selected.gameReady === false && <p className="mt-2 text-xs text-amber-200">Finish and save this draft before activating it or setting a schedule.</p>}
           {selected.gameReady !== false && selected.prizeCount < MIN_WHEEL_PRIZES && <p data-testid="schedule-needs-prizes" className="mt-2 text-xs text-amber-200">Save at least {MIN_WHEEL_PRIZES} prizes before scheduling this game, or fans would get a game they can&rsquo;t play.</p>}
           <p id="schedule-effect" className="mt-2 text-[12px] text-muted text-pretty">
-            While this window is open, this game <strong className="text-ink">replaces your live game</strong> for every fan link that hasn&rsquo;t got its own game from its campaign or from you. Leave both empty to use it only when it&rsquo;s your active game or a campaign&rsquo;s game.
+            While this window is open, this game <strong className="text-ink">replaces your live game</strong> for every fan link that hasn&rsquo;t got its own game from its campaign or from you. Leave both empty to use it only when it&rsquo;s your active game or a campaign&rsquo;s game. {zoneHint(zone)}
           </p>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="flex min-w-0 flex-col gap-1.5">

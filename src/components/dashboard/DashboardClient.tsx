@@ -1,12 +1,14 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTodayLabel } from "@/lib/localTime";
 import dynamic from "next/dynamic";
 import { brandVars } from "@/lib/theme";
 import { isStarterWheel } from "@/lib/games/wheel/sample";
 import type { WheelConfig } from "@/lib/games/wheel/types";
 import type { CreatorOverview } from "@/lib/data/types";
 import { ToastProvider } from "@/components/ui/Toast";
+import { BuildCommitContext } from "@/components/admin/buildCommit";
 import { useCreatorFetch as useFetch } from "@/lib/hooks/useFetch";
 import { REPORTS_CHANGED_EVENT } from "@/lib/reports/config";
 import TodayPanel from "@/components/dashboard/TodayPanel";
@@ -92,6 +94,7 @@ function submitSignOut(form: HTMLFormElement) {
 interface DashboardLeaveRequest {
   action: () => void;
   what: string;
+  items?: string[];
   consequence: string;
   scope?: CreatorDraftScope;
 }
@@ -103,7 +106,10 @@ export default function DashboardClient({
   initialWheel,
   initialOnboardingDismissed = false,
   initialTab,
+  commit,
 }: {
+  /** WG-18: the short commit of this build, shown in Admin › System health. */
+  commit?: string;
   /** Server-derived (dashboard/page.tsx): an active admin per is_admin(), or
    *  demo mode. The only input to the Admin section gate. */
   isAdmin: boolean;
@@ -197,6 +203,8 @@ export default function DashboardClient({
       const request: DashboardLeaveRequest = {
         action,
         what: [...(intent === "signout" && wheelDirty ? ["your game edits"] : []), ...state.descriptions].join(" and ") || "your changes",
+        // WC-19: three or more unsaved forms read as a list, not a run-on.
+        items: [...(intent === "signout" && wheelDirty ? ["your game edits"] : []), ...state.descriptions],
         consequence: options?.consequence ?? (intent === "signout" ? "Signing out now throws them away." : "Changing sections throws away these unsaved form changes. Your game edits stay here."),
         scope: options?.scope,
       };
@@ -336,8 +344,12 @@ export default function DashboardClient({
   const openCampaigns = () => goToSection("campaigns");
   // C18: a fulfilment row's fan name opens that fan's drawer. FansPanel opens
   // the drawer named in the URL when it mounts (fanFromSearch).
-  const openFanDrawer = (fanId: string) =>
-    goToSection("fans", () => window.history.replaceState({ ffFan: fanId }, "", fanHref(fanId, window.location.pathname)));
+  // WC-05: the entry remembers the section it came from, so closing the sheet
+  // returns there (history.back) instead of stranding the creator in Fans.
+  const openFanDrawer = (fanId: string) => {
+    const from = tabRef.current;
+    goToSection("fans", () => window.history.replaceState({ ffFan: fanId, ffFrom: from }, "", fanHref(fanId, window.location.pathname)));
+  };
 
   // "Your first steps" lives inside Today (replacing the old every-section
   // checklist). Rendered here so its signals + dismissal stay owned by the
@@ -426,12 +438,15 @@ export default function DashboardClient({
   }, [adminVisible, goTab]);
 
   const [title, subtitleText] = SECTION_META[tab];
+  // RD-08: the date is the browser's, computed only on the client (empty
+  // while hydrating), never the server's UTC day.
+  const today = useTodayLabel();
   // Phones show just the date on Today (the compressed top bar has no room).
   const subtitle =
     tab === "today" ? (
       <>
-        {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
-        <span className="max-lg:hidden"> · {subtitleText}</span>
+        <span data-testid="today-date">{today}</span>
+        <span className={today ? "max-lg:hidden" : undefined}>{today ? " · " : ""}{subtitleText}</span>
       </>
     ) : (
       subtitleText
@@ -440,6 +455,7 @@ export default function DashboardClient({
   return (
     <ToastProvider>
     <CreatorDraftProvider value={draftRegistry}>
+    <BuildCommitContext.Provider value={commit}>
     <div
       className="flex min-h-[100dvh] flex-col lg:flex-row"
       // Live brand theming: the page shell seeds --brand at request time, but
@@ -457,6 +473,14 @@ export default function DashboardClient({
         if (action.origin === window.location.origin && action.pathname === "/auth/signout") guardSignOut(event, form);
       }}
     >
+      {/* PA-12: the first Tab stop skips the section nav, search and bell. */}
+      <a
+        href="#dash-content"
+        data-testid="skip-to-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-lg focus:bg-[var(--brand)] focus:px-4 focus:py-2.5 focus:text-sm focus:font-bold focus:text-[var(--brand-ink)]"
+      >
+        Skip to content
+      </a>
       <Sidebar
         active={tab}
         onSelect={goTab}
@@ -506,7 +530,8 @@ export default function DashboardClient({
           }
         />
 
-        <div className="w-full max-w-[1140px] flex-1 px-4 py-6 sm:p-7">
+        {/* PA-12: the skip link's target; tabIndex -1 so focus can land here. */}
+        <div id="dash-content" tabIndex={-1} className="w-full max-w-[1140px] flex-1 px-4 py-6 outline-none sm:p-7">
       <SuspendedBanner suspended={account.data?.isActive === false} />
       {email && <InvitesBanner />}
       <LegalChangeNotice className="mb-4 text-left" />
@@ -608,6 +633,7 @@ export default function DashboardClient({
         {leaveRequest && (
           <DiscardChangesDialog
             what={leaveRequest.what}
+            items={leaveRequest.items}
             consequence={leaveRequest.consequence}
             onKeep={() => { leaveRequestRef.current = null; setLeaveRequest(null); restoreSectionUrl(); }}
             onDiscard={() => {
@@ -649,6 +675,7 @@ export default function DashboardClient({
       />
       <TermsPrompt canSignOut={!!email} />
     </div>
+    </BuildCommitContext.Provider>
     </CreatorDraftProvider>
     </ToastProvider>
   );

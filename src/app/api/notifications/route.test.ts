@@ -117,8 +117,8 @@ async function main() {
         { notifications_seen_at: iso(30), notify_new_spin: true, notify_low_balance: true, notify_messages: true },
       ],
       redemptions: [
-        { id: "r1", created_at: iso(5), spin: { prize_label: "Shoutout", fan: { display_name: "Ava", handle: null } } },
-        { id: "r0", created_at: iso(60), spin: { prize_label: "Old", fan: { display_name: "Zed", handle: null } } },
+        { id: "r1", created_at: iso(5), status: "pending", due_at: null, spin: { prize_label: "Shoutout", fan: { display_name: "Ava", handle: null } } },
+        { id: "r0", created_at: iso(60), status: "pending", due_at: null, spin: { prize_label: "Old", fan: { display_name: "Zed", handle: null } } },
       ],
       messages: [{ fan_id: "f1", body: "hey", created_at: iso(2), fan: { display_name: "Ava", handle: null } }],
       wheels: [{ id: "w1", title: "Main", updated_at: iso(90) }],
@@ -149,7 +149,8 @@ async function main() {
       check(`${c.table} read is scoped to the signed-in creator`, scoped);
       check(`${c.table} read never writes`, !c.ops.some(([op]) => ["update", "insert", "upsert", "delete"].includes(op)));
     }
-    check("pending wins only", calls.some((c) => c.table === "redemptions" && c.ops.some(([op, a]) => op === "eq" && a[0] === "status" && a[1] === "pending")));
+    // PR-10: open wins only — pending, plus in-progress rows for the overdue item.
+    check("pending wins only", calls.some((c) => c.table === "redemptions" && c.ops.some(([op, a]) => (op === "eq" && a[0] === "status" && a[1] === "pending") || (op === "in" && a[0] === "status" && JSON.stringify(a[1]) === JSON.stringify(["pending", "in_progress"])))));
     check("fan messages only", calls.some((c) => c.table === "messages" && c.ops.some(([op, a]) => op === "eq" && a[0] === "sender" && a[1] === "fan")));
     check("unread messages only", calls.some((c) => c.table === "messages" && c.ops.some(([op, a]) => op === "is" && a[0] === "read_at" && a[1] === null)));
   }

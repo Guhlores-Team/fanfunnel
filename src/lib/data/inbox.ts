@@ -1,6 +1,9 @@
 // Data layer — inbox: DM templates, fan <-> creator chat threads and the
 // auto intro / outro messages.
+import { actorNames } from "./actorNames";
 import { demoActingCreator, resolveActingCreator } from "./seatScope";
+import { isActiveAdmin } from "@/lib/auth/adminCheck";
+import { recordAudit } from "./audit";
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
 import type { DmTemplate, ChatMessage, ChatSettings, FanThread } from "./types";
 import {
@@ -18,6 +21,7 @@ import {
   mockEnsureChatIntro,
   mockSendChatOutro,
   mockFanIdForToken,
+  mockDemoCreatorActive,
 } from "./mock";
 import { resolveFanByToken } from "./fans";
 import { fanNeedsAck } from "@/lib/legal";
@@ -347,34 +351,83 @@ export async function hasThreadWith(fanId: string): Promise<boolean> {
   return (count ?? 0) > 0;
 }
 
+async function auditAdminThreadRead(sb: Awaited<ReturnType<typeof createClient>>, userId: string, creatorId: string, fanId: string): Promise<void> {
+  try {
+    const { count } = await sb.from("org_members").select("id", { count: "exact", head: true }).eq("profile_id", userId);
+    if ((count ?? 0) > 0) return; // a seat holder: reading as staff, not as admin
+    if (!(await isActiveAdmin(sb))) return;
+    await recordAudit({ actorId: userId, action: "admin.chat_read", targetType: "profile", targetId: creatorId, details: { fan: fanId.slice(0, 36) } });
+  } catch {
+    // the audit writer reports its own failures; a read is never refused for it
+  }
+}
+
+/** Messages per conversation page (RD-19): the newest page loads first, older pages on demand. */
+export const MESSAGE_PAGE_SIZE = 200;
+export interface MessagePage { messages: ChatMessage[]; /** An older page exists before the first message here. */ more: boolean }
+
 export async function getThread(fanId: string, creatorId?: unknown): Promise<ChatMessage[] | { error: "bad_request" | "forbidden" }> {
-  if (!isSupabaseConfigured()) return demoActingCreator(creatorId) ?? mockGetThread(fanId);
+  const page = await getThreadPage(fanId, creatorId);
+  return "error" in page ? page : page.messages;
+}
+
+/**
+ * One page of a conversation, oldest-first within the page: the newest
+ * MESSAGE_PAGE_SIZE messages, or with `before` (an ISO time) the ones older
+ * than it. A long thread is never cut at a fixed cap any more (RD-19).
+ */
+export async function getThreadPage(fanId: string, creatorId?: unknown, opts: { before?: string | null; limit?: number } = {}): Promise<MessagePage | { error: "bad_request" | "forbidden" }> {
+  const limit = Math.min(Math.max(1, opts.limit ?? MESSAGE_PAGE_SIZE), 500);
+  const before = opts.before && Number.isFinite(Date.parse(opts.before)) ? opts.before : null;
+  if (opts.before && !before) return { error: "bad_request" };
+  if (!isSupabaseConfigured()) {
+    const refused = demoActingCreator(creatorId);
+    if (refused) return refused;
+    const all = mockGetThread(fanId).filter((m) => !before || m.at < before);
+    const messages = all.slice(Math.max(0, all.length - limit));
+    return { messages, more: all.length > limit };
+  }
 
   const sb = await createClient();
   const {
     data: { user },
   } = await sb.auth.getUser();
-  if (!user) return [];
+  if (!user) return { messages: [], more: false };
   // A19: reading another creator's thread needs 'chat'.
   const acting = await resolveActingCreator(sb, user.id, creatorId, "chat");
   if ("error" in acting) return acting;
   const owner = acting.creatorId;
+  // WG-10 (T14): an admin opening another creator's fan conversation leaves
+  // an activity-log row (ids only). A seat's read passes can_act_for through
+  // its org membership and is not an admin read.
+  if (owner !== user.id) await auditAdminThreadRead(sb, user.id, owner, fanId);
 
-  // Bound the read: fetch the most recent messages (newest-first + limit), then
-  // present oldest-first. An unbounded thread read grows without limit as a
-  // conversation ages; the UI only needs recent history.
-  const { data } = await sb
+  // One page, newest-first with one extra row to know whether an older page
+  // exists, then presented oldest-first.
+  // The creator-side read also carries actor_id (0073, WG-07): who wrote a
+  // reply. The fan-side reads use MESSAGE_SELECT and never see it.
+  let query = sb
     .from("messages")
-    .select(MESSAGE_SELECT)
+    .select(`${MESSAGE_SELECT}, actor_id`)
     .eq("creator_id", owner)
-    .eq("fan_id", fanId)
-    .order("created_at", { ascending: false })
-    .limit(500);
-  const rows = ((data ?? []) as Parameters<typeof toChatMessage>[0][])
-    .slice()
-    .reverse();
-
-  return rows.map(toChatMessage);
+    .eq("fan_id", fanId);
+  if (before) query = query.lt("created_at", before);
+  const { data } = await query.order("created_at", { ascending: false }).limit(limit + 1);
+  const rows = ((data ?? []) as (Parameters<typeof toChatMessage>[0] & { actor_id?: string | null })[]).slice();
+  const more = rows.length > limit;
+  if (more) rows.length = limit;
+  rows.reverse();
+  // can_act_for was proved above (resolveActingCreator), so the names of the
+  // creator's own team may be read for the "via <name>" line.
+  const staffReplies = rows.filter((r) => r.sender === "creator" && r.actor_id && r.actor_id !== owner);
+  const names = staffReplies.length ? await actorNames(owner, staffReplies.map((r) => r.actor_id)) : null;
+  return {
+    messages: rows.map((r) => {
+      const via = r.sender === "creator" && r.actor_id ? names?.get(r.actor_id) : undefined;
+      return via ? { ...toChatMessage(r), via } : toChatMessage(r);
+    }),
+    more,
+  };
 }
 
 /**
@@ -414,6 +467,7 @@ export async function sendCreatorMessage(
   body: string,
   creatorId?: unknown,
 ): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) return demoActingCreator(creatorId) ?? mockSendCreatorMessage(fanId, body);
 
   const sb = await createClient();
@@ -503,7 +557,9 @@ export async function setChatSettings(input: {
     p_intro: intro ?? "",
     p_outro: outro ?? "",
   });
-  return error ? { error: "db_error" } : { ok: true };
+  // 0073: set_chat_settings refuses over-long text and control characters.
+  if (error) return { error: error.code === "22023" ? "invalid_chat_settings" : "db_error" };
+  return { ok: true };
 }
 
 /**

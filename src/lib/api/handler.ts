@@ -99,6 +99,7 @@ export function statusForError(code: string): number {
     case "game_not_ready":
     case "bingo_active_card":
     case "stock_changed":
+    case "game_changed":
     case "sold_out":
     case "already_delivered":
     case "has_history":
@@ -107,6 +108,9 @@ export function statusForError(code: string): number {
     case "last_admin":
     case "account_cleanup_pending":
     case "slug_taken":
+    case "name_taken":
+    case "owner_seat":
+    case "already_enabled":
     case "already_submitted":
     case "already_approved":
       return 409;
@@ -114,6 +118,8 @@ export function statusForError(code: string): number {
       return 410;
     case "rate_limited":
       return 429;
+    case "blocked_target":
+      return 422;
     default:
       return 400;
   }

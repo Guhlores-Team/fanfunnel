@@ -1,12 +1,15 @@
 "use client";
 
+import { withSuspendedReason } from "@/lib/onboarding/suspended";
 import { LoadError, loadJson } from "@/lib/hooks/loadJson";
 import { STALE_GAME_MESSAGE, staleGameCheck } from "./staleGame";
+import { publicTextCheck } from "@/lib/publicText";
+import { BRAND_TOO_DARK_MESSAGE, brandColorContrastOk } from "@/lib/theme";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import GamePreview from "./GamePreview";
 import GameSettingsEditor from "./GameSettingsEditor";
-import { gameSaveFeatureAllowed, editableGamePayload, gameDraftIssues, gameRefusalMessage, type CreatorGameWheel } from "./gameEditor";
+import { canSaveBingoDraft, gameSaveFeatureAllowed, editableGamePayload, gameDraftIssues, gameRefusalMessage, type CreatorGameWheel } from "./gameEditor";
 import { useGameFeatures } from "./useGameFeatures";
 import { useCreatorDraft } from "./CreatorDrafts";
 import { prizeOdds } from "@/lib/games/wheel/engine";
@@ -171,6 +174,19 @@ export default function WheelEditor({
   onOpenCampaigns?: () => void;
 }) {
   const odds = useMemo(() => prizeOdds(wheel), [wheel]);
+  // WC-16: on phones the Save bar sticks to the bottom; toasts move up so
+  // they never cover it while this editor is open.
+  useEffect(() => {
+    const root = document.documentElement;
+    const mq = window.matchMedia("(max-width: 1023px)");
+    const apply = () => root.style.setProperty("--ff-toast-offset", mq.matches ? "72px" : "0px");
+    apply();
+    mq.addEventListener("change", apply);
+    return () => {
+      mq.removeEventListener("change", apply);
+      root.style.removeProperty("--ff-toast-offset");
+    };
+  }, []);
   // OddsBar expects percentages (0–100); prizeOdds returns fractions (0–1).
   const oddsPct = useMemo(() => {
     const m = new Map<string, number>();
@@ -243,8 +259,20 @@ export default function WheelEditor({
   // the saved snapshot), so the guard holds while another section is open.
   const validation = useMemo(() => {
     const base = validateWheelDraft(wheel);
-    return { ...base, issues: gameDraftIssues(wheel as CreatorGameWheel, base.issues) };
-  }, [wheel]);
+    // PA-01: a brand color changed to one that vanishes on the dark fan page
+    // is an error on the field (a stored one never blocks other edits).
+    if (!base.brandColor && wheel.brandColor && !brandColorContrastOk(wheel.brandColor)) {
+      let stored: string | undefined;
+      try { stored = (JSON.parse(savedJson) as WheelConfig).brandColor; } catch { stored = undefined; }
+      if (wheel.brandColor.trim().toLowerCase() !== (stored ?? "").trim().toLowerCase()) {
+        base.brandColor = BRAND_TOO_DARK_MESSAGE;
+        base.issues.push({ key: "brandColor", message: `Brand color: ${BRAND_TOO_DARK_MESSAGE}` });
+      }
+    }
+    return { ...base, baseIssues: base.issues, issues: gameDraftIssues(wheel as CreatorGameWheel, base.issues) };
+  }, [wheel, savedJson]);
+  // WC-11: an unfinished, never-published bingo game saves as a draft.
+  const draftOnly = canSaveBingoDraft(gameWheel, savedJson, validation.baseIssues);
   // Errors show for a field once it has been left (blur) or after a save
   // attempt, so a half-typed hex isn't flagged mid-keystroke.
   const [touched, setTouched] = useState<Record<string, boolean>>({});
@@ -290,14 +318,21 @@ export default function WheelEditor({
   }
   function attemptSave() {
     if (deliveryPending || saving || featureBlocked) return;
-    if (validation.issues.length > 0) {
+    if (validation.issues.length > 0 && !draftOnly) {
       setSubmitted(true);
       focusFirstIssue();
       return;
     }
-    void save();
+    void save(draftOnly);
   }
 
+  /** The game version this editor loaded (0073): the save's expected version. */
+  function loadedVersion(): string | null {
+    try {
+      const saved = JSON.parse(savedJson) as WheelConfig;
+      return saved.id === wheel.id && typeof saved.updatedAt === "string" ? saved.updatedAt : null;
+    } catch { return null; }
+  }
   function loadedStock(): Record<string, number | null> {
     try {
       const saved = JSON.parse(savedJson) as WheelConfig;
@@ -334,7 +369,15 @@ export default function WheelEditor({
       setReloading(false);
     }
   }
-  async function save() {
+  async function save(draft = false) {
+    // TS-04: the subtitle is public text; prize names and descriptions are
+    // screened by the inline field errors.
+    const subtitleText = publicTextCheck(wheel.subtitle, { field: "pageText" });
+    if (!subtitleText.ok) {
+      setSaveError(subtitleText.message);
+      toast(subtitleText.message, { tone: "error" });
+      return;
+    }
     setSaving(true);
     setSaveError("");
     setJustSaved(false);
@@ -362,10 +405,19 @@ export default function WheelEditor({
         headers: { "Content-Type": "application/json" },
         // The stock each saved prize had when loaded: SQL applies a stock edit
         // as a delta over the live value, so fans' spins are never un-decremented.
-        body: JSON.stringify({ wheel: editableGamePayload(gameWheel), expectedStock: loadedStock() }),
+        // The loaded version: SQL refuses the save (game_changed) when the
+        // game was saved elsewhere since, atomically with the write.
+        body: JSON.stringify({ wheel: editableGamePayload(gameWheel), expectedStock: loadedStock(), expectedUpdatedAt: loadedVersion(), ...(draft ? { draft: true } : {}) }),
       });
       const data = await res.json();
+      if (!res.ok && data.error === "game_changed") {
+        setStale(true);
+        setSaveError(STALE_GAME_MESSAGE);
+        toast(STALE_GAME_MESSAGE, { tone: "error" });
+        return;
+      }
       if (res.ok && data.wheel) {
+        if (data.wheel.gameReady === false) toast("Draft saved. Finish the bingo checklist to make it available to fans.", { tone: "success", key: "game-draft-saved" });
         setWheel(data.wheel);
         setSavedJson(JSON.stringify(data.wheel));
         setSubmitted(false);
@@ -684,12 +736,12 @@ export default function WheelEditor({
           aria-describedby={showErrors ? SAVE_SUMMARY_ID : undefined}
           className="btn-brand min-h-[38px] rounded-[9px] px-5 text-[13.5px] font-bold"
         >
-          {saving ? "Saving…" : "Save game"}
+          {saving ? "Saving…" : draftOnly ? "Save draft" : "Save game"}
         </button>
         <div id={SAVE_SUMMARY_ID} role="alert" className="w-full empty:hidden">
           {saveError && (
             <p data-testid="game-save-error" className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm text-amber-200">
-              <span>{saveError}</span>
+              <span>{withSuspendedReason(saveError)}</span>
               {stale && saveError === STALE_GAME_MESSAGE && (
                 <button
                   type="button"
@@ -964,28 +1016,29 @@ export default function WheelEditor({
                       : ""
                   }`}
                 >
-                  {/* Corner reorder cluster: ▲▼ (keyboard path) + the drag grip. */}
-                  <div className="absolute right-2.5 top-2.5 z-[1] flex items-center gap-0.5">
-                    <div className="flex flex-col">
+                  {/* Corner reorder cluster: ▲▼ (keyboard and touch path, 32 px
+                      targets: WC-15) + the drag grip. */}
+                  <div className="absolute right-2 top-2 z-[1] flex items-center gap-0.5">
+                    <div className="flex">
                       <button
                         type="button"
                         onClick={() => movePrize(index, index - 1)}
                         disabled={index === 0}
-                        className="grid h-[13px] w-5 place-items-center rounded-[4px] text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-30"
+                        className="grid h-8 w-8 place-items-center rounded-[7px] text-muted transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-30"
                         aria-label="Move prize up"
                         title="Move up"
                       >
-                        <Glyph d={P.up} size={12} strokeWidth={2.4} />
+                        <Glyph d={P.up} size={15} strokeWidth={2.4} />
                       </button>
                       <button
                         type="button"
                         onClick={() => movePrize(index, index + 1)}
                         disabled={index === wheel.prizes.length - 1}
-                        className="grid h-[13px] w-5 place-items-center rounded-[4px] text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-30"
+                        className="grid h-8 w-8 place-items-center rounded-[7px] text-muted transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-30"
                         aria-label="Move prize down"
                         title="Move down"
                       >
-                        <Glyph d={P.down} size={12} strokeWidth={2.4} />
+                        <Glyph d={P.down} size={15} strokeWidth={2.4} />
                       </button>
                     </div>
                     <button
@@ -998,13 +1051,13 @@ export default function WheelEditor({
                       onPointerUp={() => setDragArmedIdx((v) => (v === index ? null : v))}
                       aria-label="Drag to reorder prize"
                       title="Drag to reorder (or use the ▲ ▼ buttons)"
-                      className="grid h-[26px] w-[26px] cursor-grab touch-none select-none place-items-center rounded-[7px] bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] active:cursor-grabbing"
+                      className="grid h-8 w-8 cursor-grab touch-none select-none place-items-center rounded-[7px] bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] active:cursor-grabbing"
                     >
                       <Glyph d={P.grip} size={14} />
                     </button>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2 pr-[60px]">
+                  <div className="flex flex-wrap items-center gap-2 pr-[106px]">
                     <div className="flex min-w-[170px] flex-1 items-center gap-2">
                       <input
                         aria-label="Emoji"
@@ -1014,6 +1067,7 @@ export default function WheelEditor({
                       />
                       <input
                         aria-label="Prize name"
+                        placeholder="Prize name"
                         className="ff-input min-w-0 flex-1"
                         value={p.label}
                         maxLength={MAX_PRIZE_LABEL}
@@ -1033,7 +1087,8 @@ export default function WheelEditor({
                         title="Change rarity (re-fills tickets from the rarity default)"
                         style={{
                           backgroundColor: `color-mix(in oklab, ${rarityColor} 16%, transparent)`,
-                          color: rarityColor,
+                          // PA-06: lightened so the gray "common" stays readable.
+                          color: `color-mix(in oklab, ${rarityColor} 62%, white)`,
                         }}
                       >
                         {RARITY_ORDER.map((r) => (
@@ -1137,7 +1192,8 @@ export default function WheelEditor({
                                 : Math.round(Number(e.target.value) * 100),
                           })
                         }
-                        aria-label="Cost (your cost, dollars)"
+                        aria-label="Cost (what this prize costs you, in dollars)"
+                        title="What this prize costs you to deliver. It only feeds your profit numbers in Analytics; fans never see it."
                       />
                     </Lbl>
                     <div className="flex min-w-0 flex-col gap-1.5">
@@ -1194,9 +1250,10 @@ export default function WheelEditor({
                     <button
                       type="button"
                       onClick={() => updatePrize(p.id, { color: RARITY_COLORS[p.rarity] })}
-                      className="shrink-0 text-[11px] font-semibold text-muted underline-offset-2 transition hover:text-ink hover:underline"
+                      title="Use this rarity's own color"
+                      className="inline-flex shrink-0 items-center text-[11px] font-semibold text-muted underline-offset-2 transition hover:text-ink hover:underline max-sm:min-h-11"
                     >
-                      Reset to rarity
+                      Reset color
                     </button>
                   </div>
                   <FieldError id={errId(k("color"))} message={errFor(k("color"), pe.color)} />
@@ -1229,7 +1286,7 @@ export default function WheelEditor({
                     type="button"
                     onClick={() => setMoreOpen((m) => ({ ...m, [p.id]: !more }))}
                     aria-expanded={more}
-                    className="mt-2.5 inline-flex items-center gap-1 rounded-md text-[11px] font-semibold text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                    className="mt-2.5 inline-flex items-center gap-1 rounded-md text-[11px] font-semibold text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] max-sm:mt-1 max-sm:min-h-11"
                   >
                     <Glyph
                       d={P.chevron}

@@ -194,6 +194,10 @@ interface MockPass {
   spinsRemaining: number;
   spinsGrantedTotal: number;
   createdAt: string;
+  /** PR-13: the creator switched this one link off (default on). */
+  isActive?: boolean;
+  /** PR-13: when the link stops working (null/absent = never). */
+  expiresAt?: string | null;
 }
 
 interface MockFan {
@@ -867,7 +871,7 @@ function fanGrants(fanId: string): MockGrant[] {
 
 export function mockGetWheel(): WheelConfig {
   const wheel = activeWheel();
-  return { ...structuredClone(wheel), gameKind: wheel.gameKind ?? "wheel", gameConfig: wheel.gameConfig ?? {}, gameReady: wheel.gameReady !== false, gameKindLocked: wheel.gameKindLocked === true };
+  return { ...structuredClone(wheel), gameKind: wheel.gameKind ?? "wheel", gameConfig: wheel.gameConfig ?? {}, gameReady: wheel.gameReady !== false, gameKindLocked: wheel.gameKindLocked === true, updatedAt: wheelMeta.get(wheel.id)?.updatedAt };
 }
 
 /**
@@ -896,15 +900,21 @@ function replaceFields<T extends object>(target: T, source: T): T {
   return Object.assign(target, source);
 }
 
-export function mockSaveWheel(config: WheelConfig, expectedStock: Readonly<Record<string, number | null>> = {}): WheelConfig {
+export function mockSaveWheel(config: WheelConfig, expectedStock: Readonly<Record<string, number | null>> = {}, options: { expectedUpdatedAt?: string | null; draft?: boolean } = {}): WheelConfig {
   // Save by id into the wheels map. If the id matches no existing wheel, treat
   // the save as targeting the active wheel (preserving its stable id).
   const targetId = store.wheels.has(config.id) ? config.id : activeWheel().id;
   const existing = store.wheels.get(targetId);
+  // 0073 (DB-11): a save over a newer version of the game is refused.
+  const loadedVersion = options.expectedUpdatedAt ? Date.parse(options.expectedUpdatedAt) : NaN;
+  const currentVersion = Date.parse(wheelMeta.get(targetId)?.updatedAt ?? "");
+  if (Number.isFinite(loadedVersion) && Number.isFinite(currentVersion) && loadedVersion !== currentVersion) throw new Error("game_changed");
+  // 0073 (DB-12): only a never-published game can be stored as a draft.
+  const allowDraft = options.draft === true && existing?.gameReady === false;
   // Resolve stock against the live store first, so a refused save changes nothing.
   const stocks = config.prizes.map((prize) => mockSavedStock(prize, existing, expectedStock));
   config = { ...config, prizes: config.prizes.map((prize, i) => ({ ...prize, stock: stocks[i] })) };
-  const settings = gameSettings(config.gameKind ?? existing?.gameKind, config.gameConfig ?? existing?.gameConfig);
+  const settings = gameSettings(config.gameKind ?? existing?.gameKind, config.gameConfig ?? existing?.gameConfig, allowDraft);
   const kindChanged=settings.gameKind !== (existing?.gameKind ?? "wheel");
   if(kindChanged && existing?.gameKindLocked)throw new Error("game_kind_locked");
   if((kindChanged || (settings.gameKind === "bingo" && existing?.gameReady === false)) && !mockGameFeatures()[settings.gameKind])throw new Error("feature_disabled");
@@ -913,25 +923,28 @@ export function mockSaveWheel(config: WheelConfig, expectedStock: Readonly<Recor
   const protectedCard=mockBingoEditError(targetId,candidate);if(protectedCard)throw new Error(protectedCard);
   const activeCards=[...mockBingoStore().cards.values()].some(card=>card.wheelId===targetId&&card.state.markedMask!==BINGO_FULL_MASK);
   if(activeCards&&JSON.stringify(existing?.gameConfig)!==JSON.stringify(candidate.gameConfig))throw new Error("bingo_active_card");
-  if(settings.gameKind==="bingo"){const error=bingoReadyError(candidate);if(error)throw new Error(error);}
+  let draft = false;
+  if(settings.gameKind==="bingo"){const error=bingoReadyError(candidate);if(error&&!allowDraft)throw new Error(error);draft=!!error;}
   for (const focus of mockFocusState().focuses.values()) {
     const target = config.prizes.find(prize => prize.id === focus.prize_id);
     if (focus.wheel_id === targetId && !target) mockCancelFanFocus(focus.fan_id);
   }
   const saved: WheelConfig = {
     ...structuredClone(config),
-    ...settings, gameReady: true, gameKindLocked: existing?.gameKindLocked === true,
+    ...settings, gameReady: !draft, gameKindLocked: existing?.gameKindLocked === true,
     // Mirror the int4 weight column (see prizeRow): round, positive stays ≥ 1.
     prizes: config.prizes.map((p) => ({ ...structuredClone(p), weight: storedWeight(p.weight) })),
     id: targetId,
     // Preserve lifecycle/schedule fields unless the incoming config sets them.
-    isActive: config.isActive ?? existing?.isActive,
+    isActive: draft ? false : config.isActive ?? existing?.isActive,
     // RM-2: same rule as saveWheel — only a real boolean changes the switch.
     showStock: typeof config.showStock === "boolean" ? config.showStock : existing?.showStock,
-    activeFrom: config.activeFrom ?? existing?.activeFrom ?? null,
-    activeUntil: config.activeUntil ?? existing?.activeUntil ?? null,
+    activeFrom: draft ? null : config.activeFrom ?? existing?.activeFrom ?? null,
+    activeUntil: draft ? null : config.activeUntil ?? existing?.activeUntil ?? null,
     archivedAt: config.archivedAt ?? existing?.archivedAt ?? null,
   };
+  // The version lives in wheelMeta, never in the stored game.
+  delete saved.updatedAt;
   // Keep the stored wheel and prize objects, updated in place. A spin, a
   // Chase grant or a cancel in flight holds them across an await and takes or
   // returns a unit on them afterwards (a spin re-checks only non-stock fields);
@@ -947,7 +960,7 @@ export function mockSaveWheel(config: WheelConfig, expectedStock: Readonly<Recor
   const now = new Date().toISOString();
   if (meta) meta.updatedAt = now;
   else wheelMeta.set(targetId, { createdAt: now, updatedAt: now });
-  return structuredClone(stored);
+  return { ...structuredClone(stored), updatedAt: now };
 }
 
 // --- Wheel management (multi-wheel) ----------------------------------------
@@ -964,7 +977,7 @@ export function mockListWheels(includeArchived = false): WheelSummary[] {
 /** A single wheel's full config by id, or null. */
 export function mockGetWheelById(id: string): WheelConfig | null {
   const w = store.wheels.get(id);
-  return w ? { ...structuredClone(w), gameKind: w.gameKind ?? "wheel", gameConfig: w.gameConfig ?? {}, gameReady: w.gameReady !== false, gameKindLocked: w.gameKindLocked === true } : null;
+  return w ? { ...structuredClone(w), gameKind: w.gameKind ?? "wheel", gameConfig: w.gameConfig ?? {}, gameReady: w.gameReady !== false, gameKindLocked: w.gameKindLocked === true, updatedAt: wheelMeta.get(id)?.updatedAt } : null;
 }
 
 /**
@@ -997,7 +1010,7 @@ export function mockCreateWheel(opts?: {
   } else {
     // #7: a blank "New wheel" starts EMPTY (no prizes) → editor shows the empty
     // state + "Add your first prize". Templates still seed their prizes above.
-    title = newGameTitle(gameSettings(opts?.gameKind, opts?.gameConfig, true).gameKind);
+    title = newGameTitle(gameSettings(opts?.gameKind, opts?.gameConfig, true).gameKind, Array.from(store.wheels.values(), (w) => w.title));
     subtitle = undefined;
     brandColor = SAMPLE_WHEEL.brandColor ?? "#ec4899";
     prizes = [];
@@ -1135,8 +1148,7 @@ export function mockSetWheelSchedule(
   }
   wheel.activeFrom = activeFrom;
   wheel.activeUntil = activeUntil;
-  const meta = wheelMeta.get(id);
-  if (meta) meta.updatedAt = new Date().toISOString();
+  // As in SQL, a schedule is not an edit: the game version does not advance.
   return { ok: true };
 }
 
@@ -1187,6 +1199,9 @@ export async function mockGetFanPass(
   ensurePasses(fan);
   // Per-wheel: this token's pass decides the wheel + the balance shown.
   const pass = fan.passes.find((p) => p.token === token) ?? fan.passes[0];
+  // PR-13: a link the creator switched off shows the paused page (parity
+  // with the Supabase path, which reads is_active = true only).
+  if (pass && (pass.isActive === false || mockPassExpired(pass))) return null;
   const wheelId = pass ? mockResolvedSpinWheelId(pass) : mockResolveWheelId({ campaignId: campaignForFan(fan) });
   const wheel = store.wheels.get(wheelId) ?? activeWheel();
   if (wheel.gameReady === false) return null;
@@ -1981,6 +1996,22 @@ export function mockDeleteFan(fanId: string): boolean {
   return true;
 }
 
+/**
+ * PA-03: the demo list is paged and searched like the Supabase one. The
+ * cursor is the offset of the next row (`o:<n>`), newest fan first.
+ */
+export function mockListFansPage(options: { query?: string | null; cursor?: string | null; limit?: number } = {}): { fans: FanAccountSummary[]; nextCursor: string | null; total: number | null } {
+  const q = (options.query ?? "").trim().toLowerCase();
+  const limit = Math.min(200, Math.max(1, Math.floor(options.limit ?? Number.MAX_SAFE_INTEGER)));
+  const offset = options.cursor && /^o:\d{1,9}$/.test(options.cursor) ? Number(options.cursor.slice(2)) : 0;
+  const all = mockListFans().reverse();
+  const matching = q
+    ? all.filter((f) => f.name.toLowerCase().includes(q) || f.tags.some((t) => t.toLowerCase().includes(q)))
+    : all;
+  const fans = matching.slice(offset, offset + limit);
+  return { fans, nextCursor: offset + limit < matching.length ? `o:${offset + limit}` : null, total: all.length };
+}
+
 export function mockListFans(): FanAccountSummary[] {
   const tokensByFan = new Map<string, string[]>();
   for (const [token, fanId] of store.tokens) {
@@ -2011,6 +2042,9 @@ export function mockListFans(): FanAccountSummary[] {
       campaignName: p.campaignId ? campaignName.get(p.campaignId) ?? null : null,
       spinsRemaining: p.spinsRemaining,
       createdAt: p.createdAt,
+      isActive: p.isActive !== false,
+      expiresAt: p.expiresAt ?? null,
+      selfExcludedAt: f.selfExcludedAt ?? null,
     }));
     return {
       fanId: f.id,
@@ -2033,7 +2067,7 @@ export function mockListFans(): FanAccountSummary[] {
       // Supabase path (ties go to the later-created pass).
       activeToken: f.selfExcludedAt
         ? null
-        : ([...f.passes].reverse().sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.token ?? null),
+        : ([...f.passes].reverse().filter((p) => p.isActive !== false).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.token ?? null),
       // RM-6: only the break state, never the fan's reminder or counts.
       breakUntil: isOnBreak(f.breakUntil) ? f.breakUntil ?? null : null,
       visits7: visitsLast7(checkinDays(f.id), new Date()),
@@ -2166,6 +2200,7 @@ export function mockGetFanDetail(fanId: string): FanDetail | null {
     links,
     grants,
     byCampaign,
+    passes: mockListFans().find((f) => f.fanId === fan.id)?.passes ?? [],
     visits7: visitsLast7(checkinDays(fan.id), new Date()),
   };
 }
@@ -2248,11 +2283,13 @@ export function mockListRedemptionQueue(opts: {
   query?: string;
   before?: { at: string; id: string } | null;
   limit: number;
+  fanId?: string;
 }): RedemptionItem[] {
   const q = (opts.query ?? "").trim().toLowerCase();
   const before = opts.before;
   return store.redemptions
     .filter((r) => !opts.status || r.status === opts.status)
+    .filter((r) => !opts.fanId || r.fanId === opts.fanId)
     .filter((r) => !q || r.fanName.toLowerCase().includes(q) || r.prizeLabel.toLowerCase().includes(q))
     .filter((r) => !before || r.at < before.at || (r.at === before.at && r.id < before.id))
     .sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id))
@@ -2260,6 +2297,7 @@ export function mockListRedemptionQueue(opts: {
     .map((r) => structuredClone({
       id: r.id,
       fanName: r.fanName,
+      ...(r.fanId ? { fanId: r.fanId } : {}),
       prizeLabel: r.prizeLabel,
       rarity: r.rarity,
       emoji: r.emoji,
@@ -2656,6 +2694,10 @@ export function mockGetCampaignStats(): CampaignStats[] {
     const fulfilled = store.redemptions.filter(
       (r) => r.status === "fulfilled" && r.campaignId === campaign.id
     ).length;
+    // RD-07: still owed = pending or in progress; a cancelled win is resolved.
+    const pending = store.redemptions.filter(
+      (r) => (r.status === "pending" || r.status === "in_progress") && r.campaignId === campaign.id
+    ).length;
 
     // Top prize: the mode of this campaign's attributed wins (carrying rarity).
     const counts = new Map<string, { label: string; rarity: Rarity; count: number }>();
@@ -2677,7 +2719,7 @@ export function mockGetCampaignStats(): CampaignStats[] {
       spinsPlayed,
       uniqueFans,
       fulfilled,
-      pending: Math.max(0, campaignWins.length - fulfilled),
+      pending,
       playThroughPct: spinsBought > 0 ? spinsPlayed / spinsBought : 0,
       revenue,
       arpu,
@@ -3134,6 +3176,19 @@ export function mockSetFanBlocked(fanId: string, blocked: boolean): { ok: true }
 }
 
 /** Demo twin of setFanLinkGame (0065): pin one link to one playable game, or null to follow again. */
+export function mockUpdateFanLink(fanId: string, token: string, patch: { active?: boolean; expiresAt?: string | null }): { ok: true } | { error: string } {
+  const fan = store.fans.get(fanId);
+  if (!fan) return { error: "not_found" };
+  ensurePasses(fan);
+  const pass = fan.passes.find((p) => p.token === token);
+  if (!pass) return { error: "not_found" };
+  if (typeof patch.active === "boolean") pass.isActive = patch.active;
+  if (patch.expiresAt !== undefined) pass.expiresAt = patch.expiresAt;
+  return { ok: true };
+}
+/** PR-13: an expired link reads like a switched-off one. */
+const mockPassExpired = (pass: { expiresAt?: string | null }) => !!pass.expiresAt && Date.parse(pass.expiresAt) <= Date.now();
+
 export function mockSetFanLinkGame(fanId: string, token: string, wheelId: string | null): { ok: true } | { error: string } {
   const fan = store.fans.get(fanId);
   if (!fan) return { error: "not_found" };
@@ -3417,7 +3472,21 @@ export function mockGetNotificationSources(): NotificationSources {
     lowStock,
     outOfSpins,
     fanDeletions: mockGetFanDeletionNotices(),
+    gameUnlockRequests: mockListGameUnlockRequests().map((r) => ({ id: r.id, creatorName: r.creatorName, game: r.game === "scratch" ? "scratch tickets" : "bingo", at: r.at })),
   });
+}
+
+// PR-04: demo "Ask to enable" requests (the demo account is its own admin).
+const gUnlock = globalThis as unknown as { __ffUnlock?: { id: string; creatorId: string; creatorName: string | null; game: "scratch" | "bingo"; at: string }[] };
+const unlockRequests = (gUnlock.__ffUnlock ??= []);
+export function mockRequestGameUnlock(game: "scratch" | "bingo"): { ok: true; recorded: boolean; already: boolean } | { error: "already_enabled" } {
+  if (mockGameFeatures()[game] === true) return { error: "already_enabled" };
+  if (unlockRequests.some((r) => r.creatorId === "acc-you" && r.game === game)) return { ok: true, recorded: true, already: true };
+  unlockRequests.unshift({ id: genId("unlock"), creatorId: "acc-you", creatorName: CREATOR_TITLE, game, at: new Date().toISOString() });
+  return { ok: true, recorded: true, already: false };
+}
+export function mockListGameUnlockRequests(): { id: string; creatorId: string; creatorName: string | null; game: "scratch" | "bingo"; at: string }[] {
+  return structuredClone(unlockRequests.filter((r) => mockGameFeatures()[r.game] !== true));
 }
 
 export function mockGetNotificationsSeenAt(): string | null {
@@ -4070,6 +4139,19 @@ export function mockExportFanData(token: string): FanDataExport | null {
   return safeExportValue(structuredClone(out), true) as FanDataExport;
 }
 
+/** DB-06 parity (0073 scrub_fan_traces): whoever deletes a fan, each of their
+ *  links keeps a tombstone, so a saved link says "your data was deleted"
+ *  instead of a bare 404. */
+export async function mockDeleteFanWithTombstones(fanId: string): Promise<boolean> {
+  const fan = store.fans.get(fanId);
+  if (!fan) return false;
+  const tokens = new Set([...store.tokens].filter(([, id]) => id === fanId).map(([t]) => t));
+  for (const p of fan.passes ?? []) tokens.add(p.token);
+  if (!mockDeleteFan(fanId)) return false;
+  for (const t of tokens) privacy.tombstones.set(await sha256Hex(t), "fan_deleted");
+  return true;
+}
+
 /** "Delete my data" in the demo: the creator-side delete, plus a tombstone per
  *  link and a notice for the creator. The seeded demo fan can't be deleted
  *  (every demo journey uses its link). */
@@ -4080,11 +4162,8 @@ export async function mockDeleteFanData(
   if (!hit) return { error: "not_found" };
   const { fan } = hit;
   if (fan.id === "demo-fan") return { error: "not_allowed" };
-  const tokens = new Set([...store.tokens].filter(([, id]) => id === fan.id).map(([t]) => t));
-  for (const p of fan.passes ?? []) tokens.add(p.token);
   const spinsKept = fan.wins.length;
-  mockDeleteFan(fan.id);
-  for (const t of tokens) privacy.tombstones.set(await sha256Hex(t), "fan_deleted");
+  await mockDeleteFanWithTombstones(fan.id);
   privacy.notices.unshift({ id: crypto.randomUUID(), spinsKept, at: new Date().toISOString() });
   return { ok: true, spinsKept };
 }

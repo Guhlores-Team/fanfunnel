@@ -3,6 +3,7 @@ import { patchRedemption, type RedemptionPatch } from "@/lib/data/fulfilment";
 import type { RedemptionStatus } from "@/lib/data/types";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { limitRoute } from "@/lib/api/limit";
+import { dueDateInRange } from "@/lib/dueDate";
 
 const VALID: RedemptionStatus[] = [
   "pending",
@@ -50,7 +51,9 @@ export async function PATCH(
     if (typeof body.notes === "string" && body.notes.length > 2000) {
       return badRequest("notes_too_long");
     }
-    if (typeof body.dueAt === "string" && Number.isNaN(new Date(body.dueAt).getTime())) {
+    // RD-06: a calendar day inside a sane window (today − 1 year … + 10 years),
+    // so a half-typed "0026-12-25" can never be stored.
+    if (typeof body.dueAt === "string" && !dueDateInRange(body.dueAt)) {
       return badRequest("bad_due_date");
     }
   }

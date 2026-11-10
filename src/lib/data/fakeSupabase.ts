@@ -54,6 +54,11 @@ const TABLE_DEFAULTS: Record<string, Row> = {
   campaigns: { pinned_wheel_id: null },
 };
 
+/** An rpc name economicRpc() does not model: answered as PGRST202 (not on the database). */
+class NotModelledRpc extends Error {
+  constructor(name: string) { super(`fakeSupabase: rpc ${name} is not modelled`); this.name = "NotModelledRpc"; }
+}
+
 export class FakeSupabase {
   readonly tables: Record<string, Row[]> = {
     fans: [],
@@ -138,6 +143,9 @@ export class FakeSupabase {
         if (handler) return { data: handler(args) ?? null, error: null };
         try { return { data: this.economicRpc(name, args as Row), error: null }; }
         catch (error) {
+          // A function the database does not have answers as PostgREST does
+          // (PGRST202), so RPC-first readers take their pre-migration path.
+          if (error instanceof NotModelledRpc) return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${name} in the schema cache` } };
           if (error && typeof error === "object" && "message" in error) return { data: null, error: { code: "P0001", ...error } };
           throw error;
         }
@@ -174,7 +182,7 @@ export class FakeSupabase {
       return this.rows("fan_passes").filter(p => p.token === args.p_token && (p.creator_id === this.userId || this.permissions[String(p.creator_id)] === true))
         .map(p => ({ id: p.id, creator_id: p.creator_id, fan_id: p.fan_id, campaign_id: p.campaign_id ?? null, is_active: p.is_active !== false }));
     }
-    if (!["grant_pass_spins", "create_pass_grant", "edit_pass_grant", "award_fan_referral"].includes(name)) throw new Error(`fakeSupabase: rpc ${name} is not modelled`);
+    if (!["grant_pass_spins", "create_pass_grant", "edit_pass_grant", "award_fan_referral"].includes(name)) throw new NotModelledRpc(name);
     const creator = args.p_creator;
     if (name === "award_fan_referral") {
       const fan = this.rows("fans").find(f => f.id === args.p_fan && f.creator_id === creator);
@@ -409,14 +417,32 @@ class Query implements PromiseLike<Result> {
     this.filters.push({ col, operator: "eq", value: val, test: (r) => r[col] === val });
     return this;
   }
+  in(col: string, vals: readonly unknown[]) {
+    this.filters.push({ col, operator: "in", value: vals, test: row => vals.includes(row[col]) }); return this;
+  }
   gt(col: string, val: string) {
     this.filters.push({ col, operator: "gt", value: val, test: row => String(row[col]) > val }); return this;
+  }
+  lt(col: string, val: string) {
+    this.filters.push({ col, operator: "lt", value: val, test: row => String(row[col]) < val }); return this;
   }
   gte(col: string, val: string) {
     this.filters.push({ col, operator: "gte", value: val, test: row => String(row[col]) >= val }); return this;
   }
   lte(col: string, val: string) {
     this.filters.push({ col, operator: "lte", value: val, test: row => String(row[col]) <= val }); return this;
+  }
+  /** PostgREST ilike: `%`/`_` wildcards, `\\` escapes, case-insensitive. */
+  ilike(col: string, pattern: string) {
+    let re = "";
+    for (let i = 0; i < pattern.length; i++) {
+      const c = pattern[i];
+      if (c === "\\" && i + 1 < pattern.length) { re += pattern[++i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); continue; }
+      re += c === "%" ? ".*" : c === "_" ? "." : c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+    const regex = new RegExp(`^${re}$`, "is");
+    this.filters.push({ col, operator: "ilike", value: pattern, test: (r) => typeof r[col] === "string" && regex.test(r[col] as string) });
+    return this;
   }
   neq(col: string, val: unknown) {
     this.filters.push({ col, operator: "neq", value: val, test: (r) => r[col] !== val });

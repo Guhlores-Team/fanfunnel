@@ -118,7 +118,7 @@ async function main() {
   // --- Supabase path ------------------------------------------------------------
   useSupabase = true;
   rpcRows = [
-    { id: "aaaaaaaa-0000-4000-8000-000000000002", status: "pending", created_at: "2026-10-01T00:00:02Z", notes: null, due_at: null, prize_label: "Selfie", prize_rarity: "rare", fan_name: "Sam", pool_snapshot: null, fair_trace: null, reward_kind: "code", reward_views: 2, reward_last_viewed_at: "2026-10-02T00:00:00Z" },
+    { id: "aaaaaaaa-0000-4000-8000-000000000002", status: "pending", created_at: "2026-10-01T00:00:02Z", notes: null, due_at: null, prize_label: "Selfie", prize_rarity: "rare", fan_name: "Sam", fan_id: "bbbbbbbb-0000-4000-8000-000000000009", pool_snapshot: null, fair_trace: null, reward_kind: "code", reward_views: 2, reward_last_viewed_at: "2026-10-02T00:00:00Z" },
     { id: "aaaaaaaa-0000-4000-8000-000000000001", status: "pending", created_at: "2026-10-01T00:00:01Z", notes: "n", due_at: null, prize_label: "Shoutout", prize_rarity: "common", fan_name: "Ana", pool_snapshot: null, fair_trace: null, reward_kind: null, reward_views: null, reward_last_viewed_at: null },
   ];
   const before = "2026-10-01T00:00:03.000Z|aaaaaaaa-0000-4000-8000-000000000003";
@@ -129,6 +129,12 @@ async function main() {
   check("supabase: filters, cursor and a look-ahead row", JSON.stringify(args) === JSON.stringify({ p_status: "pending", p_query: "sam", p_before_at: "2026-10-01T00:00:03.000Z", p_before_id: "aaaaaaaa-0000-4000-8000-000000000003", p_limit: 2 }));
   check("supabase: one row per page, and a next cursor", page.items.length === 1 && page.next === "2026-10-01T00:00:02Z|aaaaaaaa-0000-4000-8000-000000000002");
   check("supabase: rows map like the overview's", page.items[0].fanName === "Sam" && page.items[0].auto?.kind === "code" && page.items[0].auto?.views === 2);
+  // 0073 (DB-10): rows name their fan; `fanId` narrows the queue to one fan.
+  check("supabase: a row carries its fan id", page.items[0].fanId === "bbbbbbbb-0000-4000-8000-000000000009");
+  await listRedemptionQueue({ fanId: "bbbbbbbb-0000-4000-8000-000000000009" });
+  check("supabase: fanId is passed as p_fan", rpcCalls.at(-1)![1].p_fan === "bbbbbbbb-0000-4000-8000-000000000009");
+  const fanCalls = rpcCalls.length;
+  check("supabase: a fanId that is no uuid is refused without a call", JSON.stringify(await listRedemptionQueue({ fanId: "fan_1" })) === '{"error":"bad_request"}' && rpcCalls.length === fanCalls);
   const calls = rpcCalls.length;
   check("supabase: a non-uuid cursor id is refused", JSON.stringify(await listRedemptionQueue({ before: "2026-10-01T00:00:00Z|red_123" })) === '{"error":"bad_request"}');
   check("supabase: …without a database call", rpcCalls.length === calls);

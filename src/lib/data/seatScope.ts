@@ -47,7 +47,8 @@ export interface SeatCreator {
 /**
  * Creators the signed-in user may act for as a staff seat, and which jobs.
  * With `manage`, each creator also says whether the seat may run its
- * campaigns: can_act_for(creator, 'manage') on the caller's own session. Only
+ * campaigns: my_seat_creators.can_manage (0073), or before that
+ * can_act_for(creator, 'manage') on the caller's own session. Only
  * owners and managers hold 'manage', and they also hold both listed jobs, so
  * only those rows are asked; every other row is false. This list only shapes
  * the UI: each campaign request re-checks 'manage' on the server.
@@ -59,7 +60,8 @@ export async function listMySeatCreators(opts: { manage?: boolean } = {}): Promi
   if (!user) return { error: "unauthorized" };
   const { data, error } = await (sb as unknown as RpcClient).rpc("my_seat_creators");
   if (error) return { error: "db_error" };
-  const seats = ((data ?? []) as { creator_id: string; display_name: string | null; can_chat: boolean; can_fulfil: boolean }[]).map((r) => ({
+  const rows = (data ?? []) as { creator_id: string; display_name: string | null; can_chat: boolean; can_fulfil: boolean; can_manage?: boolean | null }[];
+  const seats = rows.map((r) => ({
     creatorId: r.creator_id,
     // M1: never an address, and a missing name reads as the neutral label.
     displayName: publicCreatorTitle(r.display_name),
@@ -67,6 +69,10 @@ export async function listMySeatCreators(opts: { manage?: boolean } = {}): Promi
     canFulfil: r.can_fulfil === true,
   }));
   if (!opts.manage) return seats;
+  // 0073 (DB-17): the list itself says whether the seat may run campaigns, so
+  // no can_act_for call per creator is needed. Older rows without the column
+  // are asked one by one below.
+  if (rows.every((r) => typeof r.can_manage === "boolean")) return seats.map((s, i) => ({ ...s, canManage: rows[i].can_manage === true }));
   const out: SeatCreator[] = [];
   for (let i = 0; i < seats.length; i += MANAGE_CHECK_BATCH) {
     const batch = seats.slice(i, i + MANAGE_CHECK_BATCH);

@@ -50,8 +50,15 @@ async function main() {
   check("already delivered (status) is 409", res.status === 409);
   check("already delivered body names the reason", (await res.json()).error === "already_delivered");
 
-  res = await call({ dueAt: "2026-12-01" });
+  const soon = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+  res = await call({ dueAt: soon });
   check("already delivered (due date) is 409 already_delivered", res.status === 409 && (await res.json()).error === "already_delivered");
+
+  // RD-06: a half-typed year or a date outside today − 1 y … + 10 y is refused before any write.
+  for (const bad of ["0026-12-25", "0002-12-25", "1999-01-01", "2099-01-01", "2026-13-01", "next week"]) {
+    res = await call({ dueAt: bad });
+    check(`due date ${bad} is 400 bad_due_date`, res.status === 400 && (await res.json()).error === "bad_due_date");
+  }
 
   nextResult = { data: null, error: { code: "23514", message: "some other check constraint" } };
   res = await call({ status: "pending" });
