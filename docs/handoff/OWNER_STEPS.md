@@ -235,6 +235,17 @@ or every e-mail step fails for the wrong reason.
 82. P · Status bar and home indicator clear; no sideways scroll on any section or fan page; no zoom on input focus.
 83. P · Fan page sound + haptics on spin and win; Mute silences.
 
+### N2. Batch 7 additions (D + P)
+83a. D · Request a password reset, open the e-mail on your phone → a "Reset your password" page with **Continue to reset my password**; tap it → choose a new password → signed in. Opening the same e-mail link a second time explains that it has expired or was used and offers a new one (never a blank page).
+83b. D · Settings › Privacy & security › **Sign out other devices** → a second signed-in browser is signed out on its next action.
+83c. D · Fans › **Export CSV** and the prize list's **Export CSV** each download a file with only your data.
+83d. D · Fan drawer › link › **Set an expiry…** (1 day) → the link shows "Expires …"; set it back to no expiry → toast "This link no longer expires."
+83e. P · On a fan link: Safety & privacy › **Mute messages from {creator}** → "Muted…" confirmation. D · reply to that fan → refused with "This fan has muted messages from you. They can still play.", your text stays in the box; the drawer shows **Muted messages**. P · **Unmute messages** → D · the same reply now arrives.
+83f. D · Try a display name or slug with "FanFunnel", "admin" or "support" → refused with a plain message; an agency named "FanFunnel Support" → refused.
+83g. D · Admin page › **Terms change notice**: set a notice → a creator sees it once on the dashboard; clear it.
+83h. D · Admin › suspend the disposable creator → signed in as them, the dashboard opens read-only (every save refused with the suspended notice); reactivate.
+83i. Visitor · Open `/` signed out → **Request creator access** goes to sign-up; `/sitemap.xml` on the Preview is empty (it lists pages only on the live site).
+
 ### O. Load (engineer, local)
 84. `npm run stress` passes on the release commit (no FAIL lines).
 
