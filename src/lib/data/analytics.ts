@@ -1,4 +1,6 @@
 import { actorNames } from "./actorNames";
+import { creatorSummary } from "./creatorSummaries";
+import { heatmapFromSummary, metricsFromSummary } from "./analyticsSummary";
 import { CompleteReadError, readScopedRows, visitScopedRows } from "./readPages";
 import { readGamePlayCounts } from "./gameAnalytics";
 import { focusTag } from "./focusTag";
@@ -216,6 +218,13 @@ export async function getMetricsExtra(
     };
   }
 
+  // PA-03: one SQL aggregate (0073) instead of reading every row; the row
+  // reads below remain for a database without it.
+  const summary = await creatorSummary(sb, user.id, "view", "creator_analytics_summary", { p_days: n });
+  if (summary.status === "error") throw new CompleteReadError();
+  const fromSummary = summary.status === "ok" ? metricsFromSummary(summary.data, n, new Date(cutoff)) : null;
+  if (fromSummary) return fromSummary;
+
   const since = new Date(Date.parse(cutoff) - n * 24 * 60 * 60 * 1000).toISOString();
   // Weekly-active fans needs the last 14 days (this week + last week) of spins
   // with their fan, independent of the trend window.
@@ -305,6 +314,12 @@ export async function getEngagementHeatmap(
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return empty;
+
+  // PA-03: the hour-of-week grid comes from the SQL aggregate when it exists.
+  const summary = await creatorSummary(sb, user.id, "view", "creator_analytics_summary", { p_days: n });
+  if (summary.status === "error") throw new CompleteReadError();
+  const fromSummary = summary.status === "ok" ? heatmapFromSummary(summary.data) : null;
+  if (fromSummary) return fromSummary;
 
   const since = new Date(Date.parse(cutoff) - n * 24 * 60 * 60 * 1000).toISOString();
   const spinRows = await readScopedRows<{ created_at: string }>(sb, "spins", "created_at", q => q.eq("creator_id", user.id).eq("kind", "play").gte("created_at", since), cutoff);
