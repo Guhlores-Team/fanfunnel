@@ -75,7 +75,7 @@ Also, in both projects (the owner's ordered list is `docs/handoff/OWNER_STEPS.md
 - **Authentication → Providers → Email:** keep **Confirm email ON**; **Minimum password length
   = 8** (the app checks 8+ with a letter and a digit in the browser only; the project default of 6
   would accept a weaker password sent straight to the auth API).
-- **Authentication → Settings:** **Email OTP expiration** — the default 1 hour also expires admin
+- **Authentication → Providers → Email:** **Email OTP expiration** — the default 1 hour also expires admin
   invitations; raise it (up to 24 h) or send invitations to people at their keyboard.
   **Secure email change** — leave ON (both the old and the new address must confirm; the app
   shows "step 1 of 2" after the first link) unless the owner decides otherwise.
