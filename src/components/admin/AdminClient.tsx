@@ -19,7 +19,7 @@ import LoadFailed from "@/components/dashboard/LoadFailed";
 import { LoadError, loadFailureKind } from "@/lib/hooks/loadJson";
 import AdminReports from "./AdminReports";
 import AdminAgencies from "./AdminAgencies";
-import { pendingAgeLabel, pendingAgeOverdue } from "./pendingAge";
+import { ADMIN_ACCOUNTS_PAGE, filterAccounts, pendingAgeLabel, pendingAgeOverdue, requestAgeLabel, requestOverdue } from "./pendingAge";
 import { useNow } from "@/lib/hooks/useNow";
 
 interface PendingApp {
@@ -54,8 +54,20 @@ function initialsOf(name: string, email: string) {
  * checkAdmin in dashboard/page.tsx); every /api/admin route re-checks with
  * requireAdminRoute, so a 401/403 here still shows "Admins only".
  */
-export default function AdminClient() {
+export default function AdminClient({ commit }: { /** WG-18: the short commit this build came from (server-derived). */ commit?: string } = {}) {
   const [data, setData] = useState<AdminOverview | null>(null);
+  // WG-18: search and "Show more" over the loaded accounts; `pinned` keeps an
+  // account another card jumps to (Agencies › Suspend owner) in the list.
+  const [accountQuery, setAccountQuery] = useState("");
+  const [accountsShown, setAccountsShown] = useState(ADMIN_ACCOUNTS_PAGE);
+  const [pinnedAccount, setPinnedAccount] = useState<string | null>(null);
+  // Agencies › "Suspend owner" jumps to that account's row once it is rendered.
+  useEffect(() => {
+    if (!pinnedAccount || !data) return;
+    const el = document.getElementById(`admin-account-${pinnedAccount}`);
+    el?.scrollIntoView({ block: "center" });
+    el?.querySelector<HTMLButtonElement>("button[data-suspend]")?.focus();
+  }, [pinnedAccount, data]);
   const [loading, setLoading] = useState(true);
   // "mfa": an admin whose session hasn't done two-factor (the server said
   // mfa_required); "other": not an active admin / signed out.
@@ -275,6 +287,10 @@ export default function AdminClient() {
   const pending = apps.filter((a) => a.status === "pending");
   const rejected = apps.filter((a) => a.status === "rejected");
   const accounts = data?.accounts ?? [];
+  const matchingAccounts = filterAccounts(accounts, accountQuery);
+  const pinned = pinnedAccount ? accounts.find((a) => a.id === pinnedAccount) : undefined;
+  const pageOfAccounts = matchingAccounts.slice(0, accountsShown);
+  const visibleAccounts = pinned && !pageOfAccounts.includes(pinned) ? [pinned, ...pageOfAccounts] : pageOfAccounts;
 
   return (
     <div className="flex flex-col gap-[18px]">
@@ -325,7 +341,9 @@ export default function AdminClient() {
             extra={
               <span className="flex items-center gap-3">
                 {!loading && loadError == null && (
-                  <span className="tnum text-xs text-muted">{accounts.length} total</span>
+                  <span className="tnum text-xs text-muted" data-testid="admin-accounts-count">
+                    {accountQuery.trim() ? `${matchingAccounts.length} of ${accounts.length}` : `${accounts.length} total`}
+                  </span>
                 )}
                 <button
                   type="button"
@@ -353,23 +371,50 @@ export default function AdminClient() {
           ) : accounts.length === 0 ? (
             <p className="px-[18px] py-8 text-center text-[13.5px] text-muted">No creator accounts yet.</p>
           ) : (
-            <ul>
-              {accounts.map((a) => (
-                <AccountRow
-                  key={a.id}
-                  account={a}
-                  onPatch={patchAccount}
-                  onDelete={deleteAccount}
-                  onResetTwoFactor={resetTwoFactor}
-                  busy={busyAccounts.has(a.id)}
-                />
-              ))}
-            </ul>
+            <>
+              <div className="border-b border-[#1f1b27] px-[18px] py-3">
+                <label className="block text-xs text-muted">
+                  Search accounts
+                  <input
+                    type="search"
+                    value={accountQuery}
+                    onChange={(e) => { setAccountQuery(e.target.value); setAccountsShown(ADMIN_ACCOUNTS_PAGE); }}
+                    placeholder="Name or e-mail"
+                    data-testid="admin-accounts-search"
+                    className="ff-input mt-1 w-full sm:max-w-sm"
+                  />
+                </label>
+              </div>
+              {matchingAccounts.length === 0 && !pinned ? (
+                <p className="px-[18px] py-8 text-center text-[13.5px] text-muted" data-testid="admin-accounts-none">No account matches that search.</p>
+              ) : (
+                <ul>
+                  {visibleAccounts.map((a) => (
+                    <AccountRow
+                      key={a.id}
+                      account={a}
+                      onPatch={patchAccount}
+                      onDelete={deleteAccount}
+                      onResetTwoFactor={resetTwoFactor}
+                      busy={busyAccounts.has(a.id)}
+                    />
+                  ))}
+                </ul>
+              )}
+              {matchingAccounts.length > accountsShown && (
+                <div className="flex items-center justify-center gap-3 border-t border-[#1f1b27] px-[18px] py-3">
+                  <span className="tnum text-xs text-muted">Showing {Math.min(accountsShown, matchingAccounts.length)} of {matchingAccounts.length}</span>
+                  <button type="button" data-testid="admin-accounts-more" onClick={() => setAccountsShown((n) => n + ADMIN_ACCOUNTS_PAGE)} className={`${btnGhost} min-h-9 px-3 text-[13px]`}>
+                    Show {Math.min(ADMIN_ACCOUNTS_PAGE, matchingAccounts.length - accountsShown)} more
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </section>
 
-        <AdminAgencies onSuspendOwner={(id) => { const el = document.getElementById(`admin-account-${id}`); el?.scrollIntoView({ block: "center" }); el?.querySelector<HTMLButtonElement>("button[data-suspend]")?.focus(); }} />
-        <SystemHealthCard />
+        <AdminAgencies onSuspendOwner={(id) => setPinnedAccount(id)} />
+        <SystemHealthCard commit={commit} />
         <AdminLookup />
         <StuckDeletions />
         <AdminErrors />
@@ -878,6 +923,7 @@ function AccessRequests({
   // WG-12: approving opens an account for fans; it asks first.
   const [approving, setApproving] = useState<string | null>(null);
   const [reason, setReason] = useState<RejectionReason | "">("");
+  const now = useNow(60_000);
   const list = view === "pending" ? pending : rejected;
   const tab = (v: "pending" | "rejected", label: string, n: number) => (
     <button
@@ -932,8 +978,10 @@ function AccessRequests({
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[14px] font-semibold text-ink">{name}</p>
                       {a.email && <p className="truncate text-[12.5px] text-muted">{a.email}</p>}
-                      <p className="mt-1 text-xs text-muted">
+                      <p className="mt-1 text-xs text-muted" data-testid="request-age" data-overdue={view === "pending" && requestOverdue(a.createdAt, now) ? "true" : "false"}>
                         Asked {new Date(a.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
+                        {requestAgeLabel(a.createdAt, now) && <> · {requestAgeLabel(a.createdAt, now)}</>}
+                        {view === "pending" && requestOverdue(a.createdAt, now) && <span className="ml-1.5 rounded-full border border-amber-300/40 px-1.5 py-[1px] font-semibold text-amber-200">Waiting over a week</span>}
                       </p>
                       {a.audienceSize && <p className="mt-1 text-xs text-muted">Audience: {a.audienceSize}</p>}
                       {a.socials && <p className="mt-1 break-words text-xs text-muted">Links: {a.socials}</p>}

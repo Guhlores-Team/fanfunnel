@@ -104,7 +104,10 @@ export default function DashboardClient({
   initialWheel,
   initialOnboardingDismissed = false,
   initialTab,
+  commit,
 }: {
+  /** WG-18: the short commit of this build, shown in Admin › System health. */
+  commit?: string;
   /** Server-derived (dashboard/page.tsx): an active admin per is_admin(), or
    *  demo mode. The only input to the Admin section gate. */
   isAdmin: boolean;
@@ -610,7 +613,7 @@ export default function DashboardClient({
             onDisplayNameChange={onSettingsDisplayName}
           />
         )}
-        {tab === "admin" && adminVisible && <AdminClient />}
+        {tab === "admin" && adminVisible && <AdminClient commit={commit} />}
         {leaveRequest && (
           <DiscardChangesDialog
             what={leaveRequest.what}
