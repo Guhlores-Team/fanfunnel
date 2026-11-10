@@ -10,7 +10,7 @@ import { mockReadSpinAttempt } from "./mock";
 // passes. The pre-0059 claim/record/stock path is gone; its RPCs are revoked.
 import { cache } from "react";
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
-import { FAN_PAGE_DEADLINE_MS, FAN_READ_TIMEOUT_MS, FanPassUnavailableError, SPIN_RPC_TIMEOUT_MS, withFanDeadline } from "./unavailable";
+import { FAN_PAGE_DEADLINE_MS, FAN_READ_TIMEOUT_MS, FanPassUnavailableError, SPIN_RPC_TIMEOUT_MS, fanLinkExpired, withFanDeadline } from "./unavailable";
 import { normalizeClientSeed } from "@/lib/games/wheel/fairness";
 import type { Rarity, SpinResult } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
@@ -48,6 +48,7 @@ export type FanPassRow = {
   campaign_id: string | null;
   wheel_id: string;
   pinned_wheel_id?: string | null; // per-fan game pin (migration 0065)
+  expires_at?: string | null; // PR-13 (0073): null = never
   fan_id: string;
   spins_remaining: number;
   next_server_seed_hash: string | null;
@@ -94,12 +95,15 @@ export const readFanPassRow = cache(async (token: string): Promise<{ sb: ReturnT
   const CREATOR = `creator:profiles(display_name, tip_url, leaderboard_enabled, creator_note, avatar_url, pwa_icon_mode, is_active, approval_status, role)`;
   const primary = await sb
     .from("fan_passes")
-    .select(`id, creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, is_active, spins_remaining, next_server_seed_hash, ${FAN}, ${CREATOR}`)
+    .select(`id, creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, is_active, expires_at, spins_remaining, next_server_seed_hash, ${FAN}, ${CREATOR}`)
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
   if (primary.error) throw new FanPassUnavailableError("fan_passes read failed");
-  return { sb, pass: primary.data as unknown as FanPassRow | null };
+  const pass = primary.data as unknown as FanPassRow | null;
+  // PR-13: an expired link is not live (the spin RPCs refuse it): the page
+  // treats it like a link that was switched off.
+  return { sb, pass: pass && !fanLinkExpired(pass.expires_at) ? pass : null };
 });
 
 /**

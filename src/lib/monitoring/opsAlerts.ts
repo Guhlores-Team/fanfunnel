@@ -48,7 +48,7 @@ export function reportHeartbeatFailed(capture: Capture = captureAfterResponse): 
   capture({ source: "server", message: HEARTBEAT_FAILED, route: HEARTBEAT_ROUTE });
 }
 
-export const MAINTENANCE_STEPS = ["cleanup", "health", "deletions", "storage", "push", "digest"] as const;
+export const MAINTENANCE_STEPS = ["cleanup", "applicants", "health", "deletions", "storage", "push", "digest"] as const;
 export type MaintenanceStep = (typeof MAINTENANCE_STEPS)[number];
 /** OPS3-10: one fixed message per step, so the alert names what failed. */
 export function maintenanceStepFailedMessage(step: MaintenanceStep, how: "failed" | "timed_out"): string {

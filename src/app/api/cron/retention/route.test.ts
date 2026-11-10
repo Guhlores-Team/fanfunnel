@@ -16,7 +16,7 @@ const check = (label: string, cond: unknown) => {
 
 const rpcCalls: { fn: string; args: Record<string, number> }[] = [];
 const audits: Record<string, unknown>[] = [];
-let deleted: Record<string, number | null> = { admin_audit_log: 0, creator_notices: 0, link_tombstones: 0, app_errors: null };
+let deleted: Record<string, unknown> = { admin_audit_log: 0, creator_notices: 0, link_tombstones: 0, app_errors: null };
 let healthRuns = 0;
 let healthOkay = true;
 mock.module("@/lib/operations/runtime", { namedExports: { runOperationalChecks: async (source: string) => { assert.equal(source, "maintenance"); healthRuns++; return { ok: healthOkay }; } } });
@@ -43,6 +43,10 @@ mock.module("@/lib/data", {
 });
 // Failure alerts are covered by routeAlerts.test.ts; keep this file's RPC count exact.
 mock.module("@/lib/monitoring/capture", { namedExports: { captureNow: async () => {}, flushAlertDigest: async () => "none" } });
+// DB-04: what the route hands to the declined-applicant account deletion, and its answer.
+const applicantCalls: unknown[] = [];
+let applicants: { due: number; completed: number; pending: number; kept: number; failed: number } | "throw" = { due: 0, completed: 0, pending: 0, kept: 0, failed: 0 };
+mock.module("@/lib/account/declinedApplicants", { namedExports: { deleteDeclinedApplicants: async (_svc: unknown, ids: unknown) => { applicantCalls.push(ids); if (applicants === "throw") throw new Error("boom"); return applicants; } } });
 let deletionRuns = 0;
 let deletions = { due: 0, resumed: 0, completed: 0, pending: 0, failed: 0, waiting: 0, needsAdmin: 0 };
 mock.module("@/lib/account/deletionRetry", { namedExports: { retryPausedDeletions: async () => { deletionRuns++; return deletions; } } });
@@ -75,11 +79,12 @@ async function main() {
   res = await call(`Bearer ${SECRET}`);
   check("right header → 200", res.status === 200 && /no-store/.test(res.headers.get("cache-control") ?? ""));
   const okBody = await res.json();
-  check("OPS3-10: every step is reported ok with its duration", Array.isArray(okBody.steps) && okBody.steps.map((s: { step: string }) => s.step).join(",") === "cleanup,health,deletions,storage,push,digest" && okBody.steps.every((s: { status: string; ms: number }) => s.status === "ok" && Number.isFinite(s.ms)));
+  check("OPS3-10: every step is reported ok with its duration", Array.isArray(okBody.steps) && okBody.steps.map((s: { step: string }) => s.step).join(",") === "cleanup,applicants,health,deletions,storage,push,digest" && okBody.steps.every((s: { status: string; ms: number }) => s.status === "ok" && Number.isFinite(s.ms)));
   check("OPS3-09: paused push devices were resumed", okBody.pushResumed === 2);
   check("OPS3-08: the heartbeat outcome is in the answer", okBody.heartbeat === "off");
-  const { maxDuration, STEP_TIMEOUT_MS, RUN_LOCK_TTL_MS } = await import("./route");
-  check("RS-05: maxDuration = 300, steps bounded, lock TTL covers a full run", maxDuration === 300 && STEP_TIMEOUT_MS === 60_000 && RUN_LOCK_TTL_MS === 300_000);
+  const routeModule = await import("./route");
+  check("RS-05: maxDuration = 300 and every step is bounded", routeModule.maxDuration === 300 && routeModule.STEP_TIMEOUT_MS === 60_000);
+  check("OPS3-10: overlap is the database's job (advisory lock in the cleanup, 0073): no app-side run lock", !("RUN_LOCK_TTL_MS" in routeModule) && okBody.error === undefined);
   check(
     "the RPC gets the documented periods",
     rpcCalls.length === 1 && rpcCalls[0].fn === "run_retention_cleanup" &&
@@ -104,6 +109,34 @@ async function main() {
   const priorAudits = audits.length;
   res = await call(`Bearer ${SECRET}`);
   check("push-only cleanup still produces its audit entry", res.status === 200 && audits.length === priorAudits + 1 && (audits.at(-1)?.details as { pushLog?: number }).pushLog === 1);
+
+  // 0073: the cleanup's new keys. The applicants' ids go to the account
+  // deletion and nowhere else: not the answer, not the audit log.
+  const ID = "11111111-1111-4111-8111-111111111111";
+  deleted = { admin_audit_log: 0, creator_notices: 0, link_tombstones: 0, app_errors: 0, stale_spin_attempts: 3, declined_applications: 1, declined_applicant_ids: [ID] };
+  applicants = { due: 1, completed: 1, pending: 0, kept: 0, failed: 0 };
+  applicantCalls.length = 0;
+  res = await call(`Bearer ${SECRET}`);
+  let body = await res.json();
+  const details = audits.at(-1)?.details as Record<string, unknown>;
+  check("DB-04: the declined applicants' ids reach the account deletion", res.status === 200 && JSON.stringify(applicantCalls) === JSON.stringify([[ID]]));
+  check("…and the answer carries counts, never the ids", body.declinedApplicants.completed === 1 && body.deleted.declined_applications === 1 && body.deleted.stale_spin_attempts === 3 && !JSON.stringify(body).includes(ID));
+  check("the audit entry counts aged attempts, declined requests and deleted accounts without ids", details.staleSpinAttempts === 3 && details.declinedApplications === 1 && details.declinedApplicantAccountsDeleted === 1 && !JSON.stringify(details).includes(ID));
+  applicants = { due: 1, completed: 0, pending: 1, kept: 0, failed: 0 };
+  res = await call(`Bearer ${SECRET}`);
+  check("an applicant deletion still in progress is 202 pending", res.status === 202 && (await res.json()).pending === true);
+  applicants = { due: 1, completed: 0, pending: 0, kept: 0, failed: 1 };
+  res = await call(`Bearer ${SECRET}`);
+  check("an applicant account that could not be deleted is 503, never a silent success", res.status === 503);
+  applicants = "throw";
+  res = await call(`Bearer ${SECRET}`);
+  body = await res.json();
+  check("a crashing applicants step is named, counted as failed, and the run continues", res.status === 503 && body.steps.find((s: { step: string }) => s.step === "applicants")?.status === "failed" && body.declinedApplicants.failed === 1 && body.steps.length === 7);
+  applicants = { due: 0, completed: 0, pending: 0, kept: 0, failed: 0 };
+  deleted = { admin_audit_log: 0, creator_notices: 0, link_tombstones: 0, app_errors: 0, declined_applicant_ids: [] };
+  const auditsBefore = audits.length;
+  res = await call(`Bearer ${SECRET}`);
+  check("an empty id list is not counted as a deletion (no audit entry, 200)", res.status === 200 && audits.length === auditsBefore);
 
   storage = { ...storage, accountsPending: 1, reviewRequired: 1 };
   res = await call(`Bearer ${SECRET}`);

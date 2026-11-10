@@ -234,29 +234,3 @@ export async function rateLimitShared(
   }
   return rateLimit(key, limit, windowMs);
 }
-
-// --- Shared run lock ----------------------------------------------------------
-// OPS3-10: one holder at a time across instances (SET NX PX on the shared
-// store), released when the work ends or after ttlMs. Without a store, or
-// while it is in cooldown, the lock is per instance (same fallback as above).
-const locks = globalThis as unknown as { __ffRunLocks?: Map<string, number> };
-const localLocks = (locks.__ffRunLocks ??= new Map<string, number>());
-
-export async function tryAcquireSharedLock(name: string, ttlMs: number): Promise<{ ok: boolean; release: () => Promise<void> }> {
-  const key = storeKey(`lock:${name}`);
-  const env = upstashEnv();
-  if (env && rateLimitStoreSkipFor() === 0) {
-    try {
-      const out = await pipeline(env, [["SET", key, "1", "NX", "PX", String(ttlMs)]]);
-      const ok = out[0]?.result === "OK";
-      return { ok, release: async () => { if (ok) { try { await pipeline(env, [["DEL", key]]); } catch { /* the TTL releases it */ } } } };
-    } catch {
-      noteStoreFallback();
-    }
-  }
-  const now = Date.now();
-  const until = localLocks.get(key);
-  if (until !== undefined && until > now) return { ok: false, release: async () => undefined };
-  localLocks.set(key, now + ttlMs);
-  return { ok: true, release: async () => { localLocks.delete(key); } };
-}

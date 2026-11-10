@@ -1310,7 +1310,7 @@ export async function mockSpin(token: string, clientSeed = "", requestId: string
 
 export async function mockReadSpinAttempt(token: string, intent: SpinIntent): Promise<SpinAttemptStatus> {
   const found = passForToken(token);
-  if (!found) return { status: "unavailable" };
+  if (!found) return { status: "not_found" }; // RS-01 parity with get_spin_attempt_status (0073)
   if (found.fan.blockedAt || found.fan.selfExcludedAt || !mockDemoCreatorActive()) return { status: "unavailable" };
   const hash = await sha256Hex(JSON.stringify(["spin-attempt-v1", "wheel", normalizeClientSeed(intent.clientSeed), intent.publishedSeedHash?.toLowerCase() ?? null]));
   const attempt = mockFocusState().attempts.get(intent.requestId.toLowerCase());

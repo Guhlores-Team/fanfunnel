@@ -10,6 +10,18 @@ export class FanPassUnavailableError extends Error {
   }
 }
 
+/**
+ * PR-13 (0073): `fan_passes.expires_at` (null = never). Every spin RPC treats
+ * `expires_at <= now()` as a link that is not live; the fan-page reads use
+ * this so an expired link looks exactly like one that was switched off.
+ */
+export function fanLinkExpired(expiresAt: string | null | undefined, now: number = Date.now()): boolean {
+  if (!expiresAt) return false;
+  const at = Date.parse(expiresAt);
+  // An unreadable date fails closed: the database would refuse the spin anyway.
+  return !Number.isFinite(at) || at <= now;
+}
+
 /** OPS3-02: one database call on the fan read path may take this long. */
 export const FAN_READ_TIMEOUT_MS = 4_000;
 /** OPS3-02: a whole fan page read (several calls) may take this long. */

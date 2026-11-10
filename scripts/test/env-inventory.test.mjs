@@ -21,7 +21,7 @@ const ROOT = new URL("../../", import.meta.url).pathname;
 /** Set by the platform or the test harness, never by an operator. */
 export const PLATFORM_NAMES = new Set([
   "NODE_ENV", "NEXT_PHASE", "NEXT_RUNTIME", // Node / Next
-  "VERCEL", "VERCEL_ENV", "VERCEL_URL", "VERCEL_GIT_COMMIT_SHA", "VERCEL_PROJECT_PRODUCTION_URL", // Vercel system variables
+  "VERCEL", "VERCEL_ENV", "VERCEL_URL", "VERCEL_GIT_COMMIT_SHA", "VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_DEPLOYMENT_ID", // Vercel system variables
   "CI", "GITHUB_ACTIONS", // CI runners
   "FANFUNNEL_CI_LOCAL_SERVER", // e2e-supabase-ui.yml: the localhost auth server must not report deployment health
 ]);

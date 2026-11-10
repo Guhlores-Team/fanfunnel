@@ -10,6 +10,7 @@ const check = (label: string, ok: unknown) => { assert.ok(ok, label); passed++; 
 let tomb: string | null = null;
 let creator: Record<string, unknown> | null = { is_active: true, approval_status: "approved", role: "creator" };
 let passExists = true;
+let expiresAt: string | null = null;
 const timeouts: (number | undefined)[] = [];
 function fakeClient(opts?: { timeoutMs?: number }) {
   timeouts.push(opts?.timeoutMs);
@@ -18,7 +19,7 @@ function fakeClient(opts?: { timeoutMs?: number }) {
       get(_t, prop) {
         if (prop === "then") return (res: (v: unknown) => unknown) => {
           if (table === "link_tombstones") return Promise.resolve({ data: tomb ? { reason: tomb } : null, error: null }).then(res);
-          if (table === "fan_passes") return Promise.resolve({ data: passExists ? { creator } : null, error: null }).then(res);
+          if (table === "fan_passes") return Promise.resolve({ data: passExists ? { creator, expires_at: expiresAt } : null, error: null }).then(res);
           throw new Error(`unexpected read of ${table}`);
         };
         return () => proxy;
@@ -45,6 +46,16 @@ async function main() {
     creator = row;
     check(`WC-13: ${label} creator → creator_paused`, (await getFanLinkStatus(token)) === "creator_paused");
   }
+  // PR-13 (0073): an expired link is over for good, never "closed right now".
+  expiresAt = new Date(Date.now() - 1000).toISOString();
+  check("PR-13: an expired link of a suspended creator is not creator_paused (it is the 404 with data controls)", (await getFanLinkStatus(token)) === null);
+  expiresAt = new Date(Date.now() + 60_000).toISOString();
+  check("PR-13: a link that expires later still reports creator_paused", (await getFanLinkStatus(token)) === "creator_paused");
+  expiresAt = null;
+  const { fanLinkExpired } = await import("./unavailable");
+  const NOW = Date.parse("2026-11-10T00:00:00Z");
+  check("fanLinkExpired mirrors the SQL (expires_at <= now), null never expires, an unreadable date fails closed",
+    !fanLinkExpired(null, NOW) && !fanLinkExpired(undefined, NOW) && fanLinkExpired("2026-11-09T23:59:59Z", NOW) && fanLinkExpired("2026-11-10T00:00:00Z", NOW) && !fanLinkExpired("2026-11-10T00:00:01Z", NOW) && fanLinkExpired("garbage", NOW));
   tomb = "creator_closed";
   check("a tombstone still wins over the standing read", (await getFanLinkStatus(token)) === "creator_closed");
   tomb = "fan_deleted";

@@ -21,7 +21,7 @@ async function main() {
   const keepAlive = setInterval(() => undefined, 1000);
   process.env.UPSTASH_REDIS_REST_URL = "https://up.example";
   process.env.UPSTASH_REDIS_REST_TOKEN = "uptok";
-  const { rateLimitShared, rateLimitStoreLastFallbackAt, rateLimitStoreSkipFor, resetRateLimitStoreCooldown, tryAcquireSharedLock, upstashEnv, RATE_LIMIT_STORE_TIMEOUT_MS, RATE_LIMIT_STORE_COOLDOWN_MS, fallbackReporter } = await import("./rateLimit");
+  const { rateLimitShared, rateLimitStoreLastFallbackAt, rateLimitStoreSkipFor, resetRateLimitStoreCooldown, upstashEnv, RATE_LIMIT_STORE_TIMEOUT_MS, RATE_LIMIT_STORE_COOLDOWN_MS, fallbackReporter } = await import("./rateLimit");
   check("RS-08: a trailing slash (or several) on the store URL is stripped", upstashEnv({ UPSTASH_REDIS_REST_URL: "https://up.example/", UPSTASH_REDIS_REST_TOKEN: "t" })?.url === "https://up.example" && upstashEnv({ KV_REST_API_URL: "https://kv.example// ", KV_REST_API_TOKEN: "t" })?.url === "https://kv.example");
   fallbackReporter.report = async () => { reports++; };
   check("timeout is a constant well under a second", RATE_LIMIT_STORE_TIMEOUT_MS === 800);
@@ -61,24 +61,6 @@ async function main() {
     globalThis.fetch = (async () => new Response(JSON.stringify([{ result: 1 }, { result: 1 }, { result: 60000 }]), { status: 200 })) as typeof fetch;
     check("a success ends the cooldown for good", (await rateLimitShared("fallback:e", 5, 60_000)).ok && rateLimitStoreSkipFor() === 0);
 
-    // OPS3-10: the shared run lock (SET NX PX / DEL on the store).
-    const sent: string[][][] = [];
-    let setResult: unknown = "OK";
-    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => { const cmds = JSON.parse(String(init?.body)) as string[][]; sent.push(cmds); return new Response(JSON.stringify(cmds.map((c) => ({ result: c[0] === "SET" ? setResult : 1 }))), { status: 200 }); }) as typeof fetch;
-    const lock = await tryAcquireSharedLock("cron:test", 1000);
-    check("the lock is a SET NX PX on the shared store", lock.ok && sent[0][0][0] === "SET" && sent[0][0][3] === "NX" && sent[0][0][4] === "PX" && sent[0][0][5] === "1000" && !sent[0][0][1].includes("cron:test"));
-    setResult = null;
-    check("a second holder is refused while it is held", !(await tryAcquireSharedLock("cron:test", 1000)).ok);
-    await lock.release();
-    check("release deletes the key", sent.at(-1)?.[0][0] === "DEL");
-    // Without a reachable store the lock is per instance, released the same way.
-    globalThis.fetch = (async () => new Response("down", { status: 503 })) as typeof fetch;
-    const local = await tryAcquireSharedLock("cron:local", 1000);
-    const again = await tryAcquireSharedLock("cron:local", 1000);
-    await local.release();
-    const after = await tryAcquireSharedLock("cron:local", 1000);
-    check("store down: the lock still excludes a second holder on this instance and frees on release", local.ok && !again.ok && after.ok);
-    await after.release();
     resetRateLimitStoreCooldown();
   } finally {
     globalThis.fetch = realFetch;

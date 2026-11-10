@@ -8,15 +8,16 @@ import { runOperationalChecks } from "@/lib/operations/runtime";
 import { processPendingStorageWork } from "@/lib/storage/work";
 import { captureNow, flushAlertDigest } from "@/lib/monitoring/capture";
 import { retryPausedDeletions } from "@/lib/account/deletionRetry";
-import { rateLimitShared, sharedRateLimitStoreMissing, tryAcquireSharedLock } from "@/lib/rateLimit";
+import { rateLimitShared, sharedRateLimitStoreMissing } from "@/lib/rateLimit";
 import { limitRoute } from "@/lib/api/limit";
 import { pingHeartbeat } from "@/lib/operations/heartbeat";
 import { maintenanceStepFailedMessage, reportHeartbeatFailed, type MaintenanceStep } from "@/lib/monitoring/opsAlerts";
 import { resumePausedPushDevices } from "@/lib/push/resume";
+import { deleteDeclinedApplicants } from "@/lib/account/declinedApplicants";
 
-// Authenticated maintenance entry point: retention, integrity, storage retry,
-// paused account deletions (A18, with backoff), paused push devices (OPS3-09)
-// and the pending error digest (A27). A scheduler must be configured
+// Authenticated maintenance entry point: retention, the accounts of declined
+// applicants (DB-04), integrity, storage retry, paused account deletions (A18,
+// with backoff), paused push devices (OPS3-09) and the pending error digest (A27). A scheduler must be configured
 // separately; this route does not prove it runs. Vercel sends
 // `Authorization: Bearer $CRON_SECRET`; anything else is refused, and with no
 // CRON_SECRET set the route refuses everything (fails closed), so nobody can
@@ -27,10 +28,14 @@ import { resumePausedPushDevices } from "@/lib/push/resume";
 // RS-05: the run does a lot of sequential work; without this a platform
 // default of 10-15 s would cut it mid-way and silence the heartbeat.
 export const maxDuration = 300;
-/** OPS3-10: no step may take longer than this; a slow one is cut and named. */
+/**
+ * OPS3-10: no step may take longer than this; a slow one is cut and named.
+ * Two overlapping runs (a scheduler retry, an operator's manual call) are
+ * serialized where it matters by the database: run_retention_cleanup and
+ * creator_storage_prune take one advisory lock (0073), and every deletion or
+ * storage job is claimed by lease.
+ */
 export const STEP_TIMEOUT_MS = 60_000;
-/** OPS3-10: two runs never overlap; a stuck holder frees the lock after this. */
-export const RUN_LOCK_TTL_MS = 300_000;
 
 // A23: a cron that can't run must be loud, or the privacy policy's retention
 // periods silently stop applying. Each problem is one fixed message, so Admin ›
@@ -101,16 +106,12 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, demo: true, periods: RETENTION_DAYS }, { headers: NO_STORE_HEADERS });
   }
 
-  // OPS3-10: never two runs at once (a late scheduler retry, an operator's
-  // manual call while the nightly run is still working).
-  const lock = await tryAcquireSharedLock("cron:retention", RUN_LOCK_TTL_MS);
-  if (!lock.ok) return NextResponse.json({ error: "already_running" }, { status: 409, headers: NO_STORE_HEADERS });
-  try {
-    return await run();
-  } finally {
-    await lock.release();
-  }
+  return run();
 }
+
+/** The cleanup's answer: row counts per table, plus the declined applicants' account ids (0073). */
+type CleanupResult = Record<string, unknown>;
+const count = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
 
 async function run() {
   const svc = createServiceClient();
@@ -124,10 +125,17 @@ async function run() {
       p_app_error_days: RETENTION_DAYS.resolvedAppErrors,
       p_closed_invite_days: RETENTION_DAYS.closedAgencyInvites,
     }).abortSignal(AbortSignal.timeout(STEP_TIMEOUT_MS));
-    if (error) { console.error("retention cleanup failed", error.message); return { failed: true as const, deleted: {} as Record<string, number | null> }; }
-    return { failed: false as const, deleted: (data ?? {}) as Record<string, number | null> };
+    if (error) { console.error("retention cleanup failed", error.message); return { failed: true as const, deleted: {} as CleanupResult }; }
+    return { failed: false as const, deleted: (data ?? {}) as CleanupResult };
   }, { failed: true as const, deleted: {} }, (v) => v.failed);
   if (cleanup.failed) await loud("Retention cleanup failed: run_retention_cleanup returned an error");
+  // DB-04/OPS-06: the cleanup deleted the declined requests past their period
+  // and returned the applicants once; their accounts go now, before the
+  // storage and retry steps, so a deletion begun here is finished in this run.
+  const { declined_applicant_ids: declinedApplicantIds, ...deleted } = cleanup.deleted;
+  const applicants = await runStep("applicants", steps, () => deleteDeclinedApplicants(svc, declinedApplicantIds),
+    { due: 0, completed: 0, pending: 0, kept: 0, failed: Array.isArray(declinedApplicantIds) ? declinedApplicantIds.length : 0 });
+  if (applicants.failed > 0) await loud("Declined applicants' accounts could not be deleted; delete them in Admin (their requests are already gone)");
 
   const health = await runStep("health", steps, () => runOperationalChecks("maintenance", svc), { demo: false, ok: false, canary: { status: "unavailable" as const }, invariants: { status: "unavailable" as const, counts: {}, rowLimit: 0 }, summary: null });
   // Resume paused deletions first so a resumed job's storage work is processed
@@ -136,19 +144,25 @@ async function run() {
   const storage = await runStep("storage", steps, () => processPendingStorageWork(svc), { completed: 0, pending: 0, failed: 1, reviewRequired: 0, accountsCompleted: 0, accountsPending: 0 });
   // OPS3-09: paused push devices get one more try per day.
   const push = await runStep("push", steps, () => resumePausedPushDevices(svc), { error: "db_error" as const }, (v) => "error" in v);
-  const deleted = cleanup.deleted;
-  const total = Object.values(deleted).reduce<number>((s, n) => s + (Number(n) || 0), 0);
-  if (total > 0) {
+  const total = Object.values(deleted).reduce<number>((s, n) => s + count(n), 0);
+  if (total > 0 || applicants.due > 0) {
     await recordAudit({
       actorId: null,
       action: "retention.cleanup",
       details: {
-        adminAuditLog: Number(deleted.admin_audit_log) || 0,
-        creatorNotices: Number(deleted.creator_notices) || 0,
-        linkTombstones: Number(deleted.link_tombstones) || 0,
-        closedAgencyInvites: Number(deleted.org_invites) || 0,
-        pushLog: Number(deleted.push_log) || 0,
-        appErrors: deleted.app_errors === null ? null : Number(deleted.app_errors) || 0,
+        adminAuditLog: count(deleted.admin_audit_log),
+        creatorNotices: count(deleted.creator_notices),
+        linkTombstones: count(deleted.link_tombstones),
+        closedAgencyInvites: count(deleted.org_invites),
+        pushLog: count(deleted.push_log),
+        appErrors: deleted.app_errors === null ? null : count(deleted.app_errors),
+        // 0073: pending attempts aged out (CC-08), declined requests and the
+        // applicants' accounts (DB-04). Counts only: no ids in the audit log.
+        staleSpinAttempts: count(deleted.stale_spin_attempts),
+        declinedApplications: count(deleted.declined_applications),
+        declinedApplicantAccountsDeleted: applicants.completed,
+        declinedApplicantAccountsPending: applicants.pending,
+        declinedApplicantAccountsFailed: applicants.failed,
       },
     });
   }
@@ -160,9 +174,9 @@ async function run() {
   if (rateLimitStore === "per_instance") await loud("Rate limits are per instance in production: configure a shared store (UPSTASH_REDIS_REST_URL/TOKEN or KV_REST_API_URL/TOKEN)");
   // After every other alert above, so a digest sent now covers them too.
   const digest = await runStep("digest", steps, () => flushAlertDigest(), "failed" as const, (v) => v === "failed");
-  const pending = storage.pending > 0 || storage.accountsPending > 0 || deletions.pending > 0 || deletions.waiting > 0 || deletions.needsAdmin > 0;
+  const pending = storage.pending > 0 || storage.accountsPending > 0 || deletions.pending > 0 || deletions.waiting > 0 || deletions.needsAdmin > 0 || applicants.pending > 0;
   const stepFailed = steps.some((s) => s.status !== "ok");
-  const status = cleanup.failed ? 500 : !health.ok || storage.failed > 0 || deletions.failed > 0 || stepFailed ? 503 : pending ? 202 : 200;
+  const status = cleanup.failed ? 500 : !health.ok || storage.failed > 0 || deletions.failed > 0 || applicants.failed > 0 || stepFailed ? 503 : pending ? 202 : 200;
   // OPS-02/OPS3-10: the heartbeat says "the daily job ran to the end". A step
   // that failed was alerted by name above; the ping still goes out, so the
   // monitor's silence means exactly one thing: the job did not run. A refused
@@ -170,7 +184,7 @@ async function run() {
   const heartbeat = await pingHeartbeat();
   if (heartbeat === "failed") reportHeartbeatFailed();
   return NextResponse.json({
-    ok: status < 300 && !pending, steps, heartbeat, health, pending, storage, deletions,
+    ok: status < 300 && !pending, steps, heartbeat, health, pending, storage, deletions, declinedApplicants: applicants,
     pushResumed: "resumed" in push ? push.resumed : null, digest, rateLimitStore, deleted, periods: RETENTION_DAYS,
     ...(cleanup.failed ? { error: "cleanup_failed" } : {}),
   }, { status, headers: NO_STORE_HEADERS });

@@ -119,6 +119,8 @@ export class FakeSpinLedger {
   changedOnce = false;
   /** Answer every commit (and cancel) with this reply, e.g. `unavailable` when the link/fan/creator went inactive. */
   commitReply: Record<string, unknown> | null = null;
+  /** Answer every status read with this reply (0073: `not_found`, declined/`stale`). */
+  statusReply: Record<string, unknown> | null = null;
   /** Answer `retry_context` to the next commit. */
   retryContextOnce = false;
   /** Fail reads of this table once (unknown transport) — the sealed candidate read. */
@@ -254,6 +256,7 @@ export class FakeSpinLedger {
       case "record_fan_reward_views":
         return ok((args.p_spins as unknown[]).length);
       case "get_spin_attempt_status":
+        if (this.statusReply) return ok(structuredClone(this.statusReply));
         return ok(this.replay(id) ?? { status: "absent" });
       case "cancel_spin_attempt": {
         if (this.commitReply) return ok(structuredClone(this.commitReply));

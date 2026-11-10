@@ -82,7 +82,7 @@ async function main() {
   check("a failed cleanup → 500", failedRun.status === 500);
   check("…is alerted with a fixed message", captured.length === 1 && captured[0].message === "Retention cleanup failed: run_retention_cleanup returned an error");
   let failedBody = await failedRun.json();
-  check("OPS3-10: the run continued past the failed step and still pinged the heartbeat", failedBody.steps[0].status === "failed" && failedBody.steps.length === 6 && failedBody.heartbeat === "off" && failedBody.error === "cleanup_failed");
+  check("OPS3-10: the run continued past the failed step and still pinged the heartbeat", failedBody.steps[0].status === "failed" && failedBody.steps.length === 7 && failedBody.heartbeat === "off" && failedBody.error === "cleanup_failed");
   rpcError = null;
 
   // OPS3-10: a step that throws or exceeds its deadline is named, the run continues.
@@ -90,7 +90,7 @@ async function main() {
   pushError = { message: "permission denied" };
   failedRun = await call({ authorization: `Bearer ${SECRET}` });
   failedBody = await failedRun.json();
-  check("a failed push-resume step → 503, named in a fixed alert, every other step still ran", failedRun.status === 503 && captured.length === 1 && captured[0].message === "Maintenance step failed: push (the rest of the run continued)" && failedBody.steps.filter((s: { status: string }) => s.status === "ok").length === 5);
+  check("a failed push-resume step → 503, named in a fixed alert, every other step still ran", failedRun.status === 503 && captured.length === 1 && captured[0].message === "Maintenance step failed: push (the rest of the run continued)" && failedBody.steps.filter((s: { status: string }) => s.status === "ok").length === 6);
   pushError = null;
 
   // OPS3-08: a refused heartbeat ping is recorded as its own fixed row.

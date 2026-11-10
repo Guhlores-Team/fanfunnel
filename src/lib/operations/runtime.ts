@@ -95,6 +95,6 @@ export async function runOperationalChecks(source: "manual" | "maintenance", svc
   // every nightly run until an admin clicked "Run checks now", so the
   // heartbeat went silent and the monitor said "down" daily for a site that
   // was fine. It is still returned in summary.canaryFailureAt for System
-  // health; the proposed 0073 change lets a healthy maintenance run clear it.
+  // health, and 0073 clears it on the next healthy manual or maintenance run.
   return { demo: false, ok: canary.status === "healthy" && invariants.status === "healthy" && schemaHealthy(schema) && summary !== null, canary, invariants, schema, summary };
 }

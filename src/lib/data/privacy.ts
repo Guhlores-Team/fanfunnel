@@ -36,7 +36,7 @@ import { EXPORT_PAGE_SIZE, EXPORT_ROW_CAP, exportStatus, safeExportValue } from 
 import { publicCreatorName } from "@/lib/publicCreator";
 import { exportDelivery } from "@/lib/fan/delivery";
 import { creatorCanHostPlay } from "./creatorPlayable";
-import { FAN_READ_TIMEOUT_MS } from "./unavailable";
+import { fanLinkExpired, FAN_READ_TIMEOUT_MS } from "./unavailable";
 
 type Svc = ReturnType<typeof createServiceClient>;
 /**
@@ -172,12 +172,13 @@ export async function getFanLinkStatus(token: string): Promise<FanLinkStatus | n
   // token; only the creator's standing is selected.
   const { data: pass } = await svc
     .from("fan_passes")
-    .select("creator:profiles(is_active, approval_status, role)")
+    .select("expires_at, creator:profiles(is_active, approval_status, role)")
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
-  const creator = (pass as { creator?: { is_active?: boolean | null; approval_status?: string | null; role?: string | null } | null } | null)?.creator;
-  return pass && !creatorCanHostPlay(creator) ? "creator_paused" : null;
+  const row = pass as { expires_at?: string | null; creator?: { is_active?: boolean | null; approval_status?: string | null; role?: string | null } | null } | null;
+  // PR-13: an expired link is over for good, so it is never "closed right now".
+  return row && !fanLinkExpired(row.expires_at) && !creatorCanHostPlay(row.creator) ? "creator_paused" : null;
 }
 
 // ---------------------------------------------------------------------------
