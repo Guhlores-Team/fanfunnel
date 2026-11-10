@@ -29,23 +29,25 @@ export async function clearMyData(): Promise<{ ok: true } | { error: string }> {
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  // fans → cascades fan_passes, grants, messages, wishlists, referrals, and
-  //   (0068) scrubs the link token from safety reports and spin attempts;
-  //   spins are kept anonymized until their wheel goes.
-  // Then the campaigns and games (0071: sessions can no longer DELETE either;
-  //   a game with history is removed only by this reset), then the standalone
-  //   creator-owned tables.
+  // The service-only reset (0071) deletes, under its own pre-locks (every fan
+  // and link first, then the games), the fans → cascades fan_passes, grants,
+  //   messages, wishlists, referrals, and (0068) scrubs the link token from
+  //   safety reports and spin attempts; spins are kept anonymized until their
+  //   wheel goes; then the campaigns and games (0071: sessions can no longer
+  //   DELETE either; a game with history is removed only by this reset).
   // wheels → cascades prizes, spins, (wheel-scoped) passes, happy_hours.
+  // 0073 (CC-01): this route no longer deletes the fans itself. A session
+  //   DELETE of many fans holds a game (via the Focus release trigger) while
+  //   the next fan is still unlocked, and deadlocked against a fan's commit.
+  // Then the standalone creator-owned tables.
   const fail = (table: string, message: string) => {
     // Plain "db_error" like every other mutation (see shared.ts): the table
     // name is operator detail, not something to hand to the client.
     console.error("clearMyData: delete failed", { table, error: message });
     return { error: "db_error" } as const;
   };
-  const { error: fanError } = await sb.from("fans").delete().eq("creator_id", user.id);
-  if (fanError) return fail("fans", fanError.message);
-  // The service-only reset (0071) checks an edit_wheel actor context minted on
-  // this session for the creator itself, so a seat can never reset a creator.
+  // The reset checks an edit_wheel actor context minted on this session for
+  // the creator itself, so a seat can never reset a creator.
   const context = await issueCreatorActorContext(sb, user.id, "edit_wheel");
   if (!context) return fail("campaigns+wheels", "no actor context");
   const { data: reset, error: resetError } = await createServiceClient().rpc("reset_creator_content", {

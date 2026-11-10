@@ -22,7 +22,7 @@ export const LEGAL = {
    * The database reads the same value from public.legal_terms_version() (0072):
    * bump it there in a new migration too (legalTermsVersion.test.ts checks).
    */
-  version: "2026-10-27",
+  version: "2026-11-11",
   /** Advance notice before a material change to either document, or a creator fee, takes effect. */
   changeNoticeDays: 30,
   /** Minimum age for every user, creator or fan. */

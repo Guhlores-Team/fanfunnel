@@ -35,9 +35,9 @@ export const AUTHENTICATED_DEFINER = [
   "_is_org_member(uuid)", "_my_confirmed_email()", "_owns_org(uuid)", "_owns_org_seat(uuid)",
   "admin_account_stats()", "archive_wheel(uuid)", "can_act_for(uuid, text)", "creator_link_pass(text)",
   "creator_link_tokens(uuid, uuid)",
-  "creator_redemption_queue(text, text, timestamp with time zone, uuid, integer, uuid)",
+  "creator_redemption_queue(text, text, timestamp with time zone, uuid, integer, uuid, uuid)",
   "current_user_active()", "delete_campaign(uuid, uuid)", "delete_wheel(uuid)", "is_admin()",
-  "issue_creator_actor_context(uuid, text)", "my_seat_creators()", "org_account_stats(uuid)",
+  "issue_creator_actor_context(uuid, text)", "my_seat_creators(integer)", "org_account_stats(uuid)",
   "org_add_member(uuid, text, org_role)", "org_create(text)", "org_invite_creator(uuid, text)",
   "org_invite_respond(uuid, boolean)", "org_invite_revoke(uuid)", "org_leave(uuid)",
   "org_remove_creator(uuid, uuid)", "org_remove_member(uuid)", "org_scope_creator(uuid, uuid, boolean)",
@@ -166,8 +166,10 @@ export function probeAdvisorHardening(db, psql) {
   // The prize update fires sync_code_prize_stock; the fan deletion fires
   // erase_fan_reward_values and scrub_fan_traces (T10: the deleted fan's
   // redemption stays, without the creator's notes or due date).
-  expect("revoked trigger functions still fire (prize update, fan deletion); T10 scrub", as(A, `
-    update public.prizes set label = 'one renamed' where id = '${PA}';
+  // 0073 (DB-05): a session no longer updates prizes directly; the editors
+  // (service role) fire the same trigger.
+  expect("revoked trigger functions still fire (prize update, fan deletion); T10 scrub", `set local role service_role;
+    update public.prizes set label = 'one renamed' where id = '${PA}'; reset role;` + as(A, `
     delete from public.fans where id = '${FA}';`) +
     ` select 'prize:' || label from public.prizes where id = '${PA}'; select 'fan:' || count(*) from public.fans where id = '${FA}';
       select 'redemption:' || count(*) || ',' || bool_and(notes is null) || ',' || bool_and(due_at is null) from public.redemptions where id = '${RED_A}';`,

@@ -87,6 +87,7 @@ import { probeSpinResolution } from "./spinResolutionProbe.mjs";
 import { probeLedgerGuards } from "./ledgerGuardsProbe.mjs";
 import { probeLockOrder } from "./lockOrderProbe.mjs";
 import { probeAdvisorHardening } from "./advisorHardeningProbe.mjs";
+import { probeBatch7 } from "./batch7Probe.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const SUPABASE = join(ROOT, "supabase");
@@ -334,9 +335,9 @@ const SIGNED_IN_ONLY = [
   "org_add_member(uuid, text, public.org_role)",
   "org_remove_member(uuid)",
   "org_scope_creator(uuid, uuid, boolean)",
-  "creator_redemption_queue(text, text, timestamp with time zone, uuid, integer, uuid)",
+  "creator_redemption_queue(text, text, timestamp with time zone, uuid, integer, uuid, uuid)",
   "creator_inbox_threads(timestamp with time zone, uuid, integer, uuid)",
-  "my_seat_creators()",
+  "my_seat_creators(integer)",
 ];
 const RLS_HELPERS = [
   "is_admin()", "can_act_for(uuid, text)", "current_user_active()", "_owns_org(uuid)",
@@ -355,10 +356,12 @@ function probeGrants(db) {
   // ACL nor any API role may reach it outside the durable service gateway.
   const publicImport=sql(db, `select exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a where n.nspname='public' and p.proname='import_fans' and a.grantee=0 and a.privilege_type='EXECUTE')`);
   if(publicImport!=="f")bad.push("PUBLIC retained EXECUTE on legacy import_fans");
+  const legacyImport=sql(db,"select to_regprocedure('public.import_fans(jsonb)') is not null")==="t";
   for(const role of ["anon","authenticated","service_role"]) {
-    if(priv(role,"import_fans(jsonb)"))bad.push(`${role} retained EXECUTE on legacy import_fans`);
+    if(legacyImport&&priv(role,"import_fans(jsonb)"))bad.push(`${role} retained EXECUTE on legacy import_fans`);
     const retired=psql(db,["-c",`begin;set local role ${role};select public.import_fans('[]'::jsonb);rollback;`],{allowFail:true});
-    if(!/permission denied for function import_fans\b/.test(retired.stderr||""))bad.push(`${role} reached retired import_fans`);
+    // 0073 (DB-14) dropped the shell: "does not exist" is the final answer.
+    if(!/permission denied for function import_fans\b|function public\.import_fans\(jsonb\) does not exist/.test(retired.stderr||""))bad.push(`${role} reached retired import_fans`);
   }
   for (const sig of RLS_HELPERS) {
     if (priv("anon", sig)) bad.push(`anon can EXECUTE RLS helper ${sig} (0072 revoked it)`);
@@ -506,7 +509,7 @@ function probeBreaks(db, asUser) {
       ('probe-0049-a', '${A}', '00000000-0000-4000-8000-0000000049aa', '${FA}', 3),
       ('probe-0049-b', '${B}', '00000000-0000-4000-8000-0000000049bb', '${FB}', 3),
       ('probe-0049-c', '${A}', '00000000-0000-4000-8000-0000000049aa', '${FC}', 3);
-    update public.fans set acked_at=now(),acked_terms_version='2026-10-27' where id in ('${FA}','${FB}','${FC}');
+    update public.fans set acked_at=now(),acked_terms_version=public.legal_terms_version() where id in ('${FA}','${FB}','${FC}');
     update public.fans set break_until = now() - interval '1 hour' where id = '${FC}';
     -- Supabase grants table privileges to anon/authenticated by default and
     -- leaves the rest to RLS; the stub does not, so model that here.
@@ -971,9 +974,11 @@ function probePrivacy(db) {
   `, [
     "self-last:last_admin", "self-two:ok", "self-creator:ok", "adm-role:creator",
     "spin-kept:null,null", "redemption-kept:1",
-    // 0065 (A11) adds the operational-history counts; this fixture has none to trim.
-    `retention:{"push_log": 2, "app_errors": 1, "org_invites": 2, "fan_checkins": 0, "admin_audit_log": 1, "creator_notices": 1, "link_tombstones": 1, "fan_import_batches": 0, "spin_attempt_contexts": 0, "declined_spin_attempts": 0, "creator_request_journal": 0, "actor_request_cancellations": 0}`,
-    "left:1,2,1",
+    // 0065 (A11) adds the operational-history counts; 0073 the stale pending
+    // attempts and the declined access requests; this fixture has none to trim.
+    `retention:{"push_log": 2, "app_errors": 1, "org_invites": 2, "fan_checkins": 0, "admin_audit_log": 1, "creator_notices": 1, "link_tombstones": 1, "fan_import_batches": 0, "stale_spin_attempts": 0, "declined_applications": 0, "spin_attempt_contexts": 0, "declined_applicant_ids": [], "declined_spin_attempts": 0, "creator_request_journal": 0, "actor_request_cancellations": 0}`,
+    // 0073 (DB-06): the fan deletion in this fixture tombstones its link token.
+    "left:1,2,2",
     "invites-left:new-declined@example.test,old-pending@example.test",
     `errors-left:${"d".repeat(32)},${"e".repeat(32)}`,
     "push-left:recent-a",
@@ -1210,6 +1215,12 @@ const rwSpin = (id, prize) =>
    values ('${id}', '${RW_PASS}', '${RW_A}', '${RW_WA}', '${RW_FAN}', '${prize}', 'probe');`;
 
 
+// 0073 batch-7 hardening (batch7Probe.mjs): one check per audit finding.
+function probeBatch7Hardening(db) {
+  const { bad, checks } = probeBatch7(db, psql);
+  if (bad.length) { failures++; for (const message of bad) console.log(`FAIL  ${db}: 0073 batch-7: ${message}`); }
+  else console.log(`PASS  ${db}: 0073 batch-7: ${checks} checks (creator_id immutable, seat-scoped reads, pinned access requests, text caps, reserved names, tombstones, retention ageing, canary latch, reset deletes fans, declined/blocked attempts, not_found status, link expiry, seat key share, suspended-creator editors, game_changed, bingo drafts, dashboard summaries, owner seat, actor attribution, Terms notice, consent evidence)`);
+}
 function psqlAsync(db, sqlText) {
   return new Promise((resolve) => {
     const p = spawn(
@@ -1526,6 +1537,7 @@ try {
     probeBatch4Integration(db);
     probeLedger0071(db);
     probeAdvisor0072(db);
+    probeBatch7Hardening(db);
     await probeFocusLedger(async (q) => {
       const r=await psqlAsync(db,q);
       if(r.status!==0)throw new Error(r.stderr||"focus SQL failed");
