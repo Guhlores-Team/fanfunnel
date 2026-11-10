@@ -1411,16 +1411,27 @@ async function main() {
     // RS-01: an unknown token is not_found, a live link is absent.
     const noToken = await admin.rpc("get_spin_attempt_status", { p_attempt: randomUUID(), p_token: `no-such-${RUN}`, p_request_hash: "a".repeat(64) });
     check(noToken.data?.status === "not_found", `0073 a status read for an unknown link is not_found (${noToken.error?.message ?? JSON.stringify(noToken.data)})`);
-    const liveToken = await admin.rpc("get_spin_attempt_status", { p_attempt: randomUUID(), p_token: A.token, p_request_hash: "a".repeat(64) });
+    // A's first link was self-excluded by the 0068 checks above, so a fresh
+    // fan and link stand for "live" here and A.token for "exists, unavailable".
+    const liveFan = must(await admin.from("fans").insert({ creator_id: A.id, display_name: `live ${RUN}`, acked_at: new Date().toISOString(), acked_terms_version: LEGAL_VERSION }).select("id").single(), "0073 a fan for a live link");
+    const liveLink = must(await fixtureCreatorRpc(admin, creatorFixtureClients.get(A.id), "create_pass_grant", { p_request: randomUUID(), p_creator: A.id, p_fan: liveFan.id, p_wheel: A.wheelId, p_name: `live ${RUN}`, p_spins: 5, p_bonus: 0, p_amount: 1000, p_campaign: null }), "0073 a live link");
+    check(liveLink.status === "granted" && typeof liveLink.token === "string", `0073 the live link is minted (${liveLink.status})`);
+    const liveToken = await admin.rpc("get_spin_attempt_status", { p_attempt: randomUUID(), p_token: liveLink.token, p_request_hash: "a".repeat(64) });
     check(liveToken.data?.status === "absent", `0073 a status read for a live link without that attempt is absent (${liveToken.error?.message ?? JSON.stringify(liveToken.data)})`);
+    const pausedToken = await admin.rpc("get_spin_attempt_status", { p_attempt: randomUUID(), p_token: A.token, p_request_hash: "a".repeat(64) });
+    check(pausedToken.data?.status === "unavailable", `0073 a status read for a self-excluded link is unavailable (${pausedToken.error?.message ?? JSON.stringify(pausedToken.data)})`);
     // TS-05: consent evidence is service-written and admin-read only.
-    const ack = await admin.rpc("record_fan_ack", { p_token: A.token, p_ip_hash: "b".repeat(64), p_ua_hash: null });
+    const ack = await admin.rpc("record_fan_ack", { p_token: liveLink.token, p_ip_hash: "b".repeat(64), p_ua_hash: null });
     check(ack.data?.status === "ok" && ack.data?.version === LEGAL_VERSION, `0073 record_fan_ack stamps the current Terms version (${ack.error?.message ?? JSON.stringify(ack.data)})`);
+    const pausedAck = await admin.rpc("record_fan_ack", { p_token: A.token, p_ip_hash: "b".repeat(64), p_ua_hash: null });
+    check(pausedAck.data?.status === "unavailable", `0073 record_fan_ack refuses a self-excluded link (${pausedAck.error?.message ?? JSON.stringify(pausedAck.data)})`);
+    const pausedEvidence = await admin.from("fan_consent_evidence").select("fan_id").eq("fan_id", A.fanId);
+    check(!pausedEvidence.error && (pausedEvidence.data?.length ?? 0) === 0, `0073 the refused acknowledgement leaves no evidence (${pausedEvidence.error?.message ?? pausedEvidence.data?.length})`);
     const creatorAck = await a.rpc("record_fan_ack", { p_token: A.token });
     check(creatorAck.error?.code === "42501", `0073 a creator cannot call record_fan_ack (${deniedCode(creatorAck)})`);
-    const evidence = await a.from("fan_consent_evidence").select("fan_id").eq("fan_id", A.fanId);
+    const evidence = await a.from("fan_consent_evidence").select("fan_id").eq("fan_id", liveFan.id);
     check(!evidence.error && (evidence.data?.length ?? 0) === 0, `0073 a creator reads no consent evidence (${evidence.error?.message ?? evidence.data?.length})`);
-    const evidenceRow = must(await admin.from("fan_consent_evidence").select("terms_version, ack_count").eq("fan_id", A.fanId).single(), "0073 the evidence row");
+    const evidenceRow = must(await admin.from("fan_consent_evidence").select("terms_version, ack_count").eq("fan_id", liveFan.id).single(), "0073 the evidence row");
     check(evidenceRow.terms_version === LEGAL_VERSION && evidenceRow.ack_count >= 1, "0073 the evidence row carries the version and a count");
     // DB-13 / PA-03: the dashboard summaries answer the creator and a view seat, not another tenant.
     // Service-only (a route checks can_act_for on the session, then passes p_creator); a session cannot call them.
@@ -1468,6 +1479,9 @@ async function main() {
     check(tokenRead.error?.code === "42501", `0073 the link token stays unreadable to a session (${code(tokenRead)})`);
     const forgedNotice = await a.from("creator_notices").insert({ creator_id: A.id, kind: "game_unlock_request", details: { game: "bingo" } });
     check(forgedNotice.error?.code === "42501", `0073 a session cannot write a notice (${code(forgedNotice)})`);
+    const firstAsk = await admin.from("creator_notices").insert({ creator_id: A.id, kind: "game_unlock_request", details: { game: "bingo" } });
+    const secondAsk = await admin.from("creator_notices").insert({ creator_id: A.id, kind: "game_unlock_request", details: { game: "bingo" } });
+    check(!firstAsk.error && secondAsk.error?.code === "23505", `0073 a second open unlock request for the same game is a unique violation (${firstAsk.error?.message ?? "ok"} / ${code(secondAsk)})`);
     const queueShape = await a.rpc("creator_redemption_queue", { p_limit: 1 });
     check(!queueShape.error && (queueShape.data ?? []).every((row) => "actor_id" in row && "fan_id" in row), `0073 the queue carries fan_id and actor_id (${queueShape.error?.message ?? "ok"})`);
     }

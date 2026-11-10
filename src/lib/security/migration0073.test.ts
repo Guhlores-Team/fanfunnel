@@ -146,6 +146,13 @@ check("CC-06: set_active_wheel runs as the caller and flips the creator's games 
 for (const fn of ["_default_redemption_due", "_org_owner_state", "_drop_stale_seat_scopes"]) check(`${fn} is a trigger function no API role can call`, migration.includes(`revoke execute on function public.${fn}() from public, anon, authenticated, service_role;`));
 const setActiveTs = wheelsTs.slice(wheelsTs.indexOf("export async function setActiveWheel"), wheelsTs.indexOf("export async function setWheelSchedule"));
 check("CC-06 (app): setActiveWheel calls set_active_wheel and writes no wheel row itself", /sb\.rpc\("set_active_wheel", \{ p_wheel: id \}\)/.test(setActiveTs) && !/\.update\(/.test(setActiveTs));
+const ack = lastDef(migration, "record_fan_ack");
+check("TS-05: record_fan_ack refuses a link that is not live before it writes anything", /if not p\.is_active or \(p\.expires_at is not null and p\.expires_at <= now\(\)\) or p\.self_excluded_at is not null\s*or exists \(select 1 from public\.fans f where f\.id = p\.fan_id and f\.blocked_at is not null\)\s*or not exists \(select 1 from public\.profiles c where c\.id = p\.creator_id and c\.is_active\) then\s*return jsonb_build_object\('status', 'unavailable'\);/.test(ack)
+  && ack.indexOf("'unavailable'") < ack.indexOf("update public.fans set acked_at") && ack.indexOf("for update") < ack.indexOf("'unavailable'") && ack.indexOf("'unavailable'") < ack.indexOf("insert into public.fan_consent_evidence"));
+check("PR-04: one open unlock request per creator and game is a unique partial index", migration.includes("create unique index if not exists creator_notices_unlock_request_key\n  on public.creator_notices (creator_id, (details ->> 'game')) where kind = 'game_unlock_request';")
+  && migration.includes("check (kind <> 'game_unlock_request' or jsonb_typeof(details -> 'game') is not distinct from 'string');"));
+check("PR-04: turning the game on removes the request (the only way it is resolved before retention)", /delete from public\.creator_notices n\s*where n\.creator_id = new\.id and n\.kind = 'game_unlock_request'\s*and new\.features -> \(n\.details ->> 'game'\) = 'true'::jsonb;/.test(lastDef(migration, "_resolve_unlock_requests"))
+  && /create trigger ag_unlock_request_resolved after update of features on public\.profiles/.test(migration) && migration.includes("revoke execute on function public._resolve_unlock_requests() from public, anon, authenticated, service_role;"));
 check("no new policy is wide open", !/using \(true\)|with check \(true\)/.test(migration));
 
 console.log(`migration 0073 guard: ${passed} checks passed`);
