@@ -351,5 +351,142 @@ export function probeBatch7(db, psql) {
   refused("TS-05: a creator session cannot call record_fan_ack", as(A, `select public.record_fan_ack('${TOKEN_A}');`), /permission denied for function record_fan_ack/);
   refused("TS-05: evidence cannot be moved to another creator", service(`select public.record_fan_ack('${TOKEN_A}'); update public.fan_consent_evidence set creator_id = '${B}' where fan_id = '${FA}';`), /creator_id is immutable/);
 
+  // ── (8b) dashboard follow-ups ─────────────────────────────────────────────
+  const W2 = id("f4"), W3 = id("f5"), P3 = id("f6"), SPIN_2 = id("72"), SPIN_3 = id("73"), SPIN_4 = id("74");
+  const spin = (sid) => `set local fanfunnel.economic_write = 'on';
+    insert into public.spins (id, fan_pass_id, creator_id, wheel_id, fan_id, prize_id, prize_label, prize_rarity, campaign_id) values ('${sid}', '${PASS_A}', '${A}', '${WA}', '${FA}', '${PA1}', 'one', 'common', '${CAMP_A}');
+    set local fanfunnel.economic_write = 'off';`;
+  // PR-10: the delivery promise.
+  same("PR-10: profiles.delivery_days is a smallint with its 1..60 check", q(`select (select data_type from information_schema.columns where table_schema = 'public' and table_name = 'profiles' and column_name = 'delivery_days') || ',' || (select count(*) from pg_constraint where conrelid = 'public.profiles'::regclass and conname = 'profiles_delivery_days_check' and convalidated)`), "smallint,1");
+  expect("PR-10: the creator reads its own promise; another creator and a seat read no row",
+    service(`update public.profiles set delivery_days = 5 where id = '${A}';`)
+    + as(A, `select 'own:' || delivery_days from public.profiles where id = '${A}';`)
+    + as(B, `select 'other:' || count(*) from public.profiles where id = '${A}';`)
+    + as(MG, `select 'seat:' || count(*) from public.profiles where id = '${A}';`),
+    ["own:5", "other:0", "seat:0"]);
+  expect("PR-10: a creator session cannot write its own delivery_days (profiles_update is admin-only)",
+    service(`update public.profiles set delivery_days = 5 where id = '${A}';`) + as(A, `update public.profiles set delivery_days = 9 where id = '${A}';`) + as(MG, `update public.profiles set delivery_days = 9 where id = '${A}';`)
+    + `select 'kept:' || delivery_days from public.profiles where id = '${A}';`, ["kept:5"]);
+  refused("PR-10: 61 days is refused by the database", service(`update public.profiles set delivery_days = 61 where id = '${A}';`), /profiles_delivery_days_check/);
+  refused("PR-10: 0 days is refused by the database", service(`update public.profiles set delivery_days = 0 where id = '${A}';`), /profiles_delivery_days_check/);
+  expect("PR-10: a newly won waiting prize is due delivery_days after the win; a delivered one, an explicit date and a creator without a promise are left alone",
+    spin(SPIN_2) + `insert into public.redemptions (creator_id, spin_id) values ('${A}', '${SPIN_2}');
+      select 'none:' || coalesce(due_at::text, 'null') from public.redemptions where spin_id = '${SPIN_2}';`
+    + service(`update public.profiles set delivery_days = 5 where id = '${A}';`)
+    + spin(SPIN_3) + `insert into public.redemptions (creator_id, spin_id) values ('${A}', '${SPIN_3}');
+      select 'due:' || (due_at - created_at) from public.redemptions where spin_id = '${SPIN_3}';`
+    + spin(SPIN_4) + `insert into public.redemptions (creator_id, spin_id, status, fulfilled_at) values ('${A}', '${SPIN_4}', 'fulfilled', now());
+      select 'done:' || coalesce(due_at::text, 'null') from public.redemptions where spin_id = '${SPIN_4}';
+      select 'kept:' || (due_at > now() + interval '2 days' and due_at < now() + interval '4 days')::text from public.redemptions where id = '${RED_A}';`,
+    ["none:null", "due:5 days", "done:null", "kept:true"]);
+  // PR-13: link expiry is readable, the token is not.
+  expect("PR-13: the creator reads its link's expiry under RLS; another creator reads none",
+    service(`update public.fan_passes set expires_at = '2030-01-01T00:00:00Z' where id = '${PASS_A}';`)
+    + as(A, `select 'exp:' || to_char(expires_at at time zone 'utc', 'YYYY-MM-DD') from public.fan_passes where id = '${PASS_A}';`)
+    + as(B, `select 'other:' || count(expires_at) from public.fan_passes where id = '${PASS_A}';`),
+    ["exp:2030-01-01", "other:0"]);
+  refused("PR-13: the link token stays unreadable to a session", as(A, `select token from public.fan_passes where id = '${PASS_A}';`), /permission denied for table fan_passes/);
+  // WG-07: the queue names the account that moved the prize.
+  same("WG-07: the seven-argument queue is replaced by the eight-argument one", q(`select (to_regprocedure('public.creator_redemption_queue(text,text,timestamptz,uuid,integer,uuid,uuid)') is null)::text || ',' || (to_regprocedure('public.creator_redemption_queue(text,text,timestamptz,uuid,integer,uuid,uuid,uuid)') is not null)::text`), "true,true");
+  expect("WG-07: the queue carries actor_id and narrows to one actor",
+    as(A, `select 'fresh:' || coalesce(actor_id::text, 'null') from public.creator_redemption_queue();`)
+    + as(FU, `select public.set_redemption_state('${RED_A}', '${A}', '{"status":"in_progress"}'::jsonb);`)
+    + as(A, `select 'moved:' || coalesce(actor_id::text, 'null') from public.creator_redemption_queue(p_status => 'in_progress');
+        select 'by-seat:' || count(*) from public.creator_redemption_queue(p_actor => '${FU}');
+        select 'by-me:' || count(*) from public.creator_redemption_queue(p_actor => '${A}');`)
+    + as(FU, `select 'seat-sees:' || coalesce(actor_id::text, 'null') from public.creator_redemption_queue(p_creator => '${A}');`)
+    + as(B, `select 'stranger:' || count(*) from public.creator_redemption_queue(p_creator => '${A}');`),
+    ["fresh:null", `moved:${FU}`, "by-seat:1", "by-me:0", `seat-sees:${FU}`, "stranger:0"]);
+  refused("WG-07: anon cannot call the queue", `set local role anon; select count(*) from public.creator_redemption_queue();`, /permission denied for function creator_redemption_queue/);
+  // WG-04 / WG-13 / PR-04: the new notice kinds.
+  expect("notices: the three new kinds are stored by the server",
+    service(`insert into public.creator_notices (creator_id, kind, details) values ('${A}', 'agency_dissolved', '{"org_name":"x"}'), ('${A}', 'agency_owner_suspended', '{"org_name":"x"}'), ('${A}', 'game_unlock_request', '{"game":"bingo"}');`)
+    + as(A, `select 'mine:' || count(*) from public.creator_notices where kind in ('agency_dissolved', 'agency_owner_suspended', 'game_unlock_request');`)
+    + as(B, `select 'other:' || count(*) from public.creator_notices;`),
+    ["mine:3", "other:0"]);
+  refused("notices: an unknown kind is refused", service(`insert into public.creator_notices (creator_id, kind) values ('${A}', 'anything_else');`), /creator_notices_kind_check/);
+  refused("notices: a session cannot write a notice", as(A, `insert into public.creator_notices (creator_id, kind, details) values ('${A}', 'game_unlock_request', '{"game":"bingo"}');`), /permission denied for table creator_notices/);
+  // WG-13: an owner's suspension reaches every seat and managed creator.
+  expect("WG-13: suspending an agency owner leaves one notice per seat and managed creator (not the owner), flips orgs.owner_active, and neither repeats nor recurses",
+    service(`update public.profiles set is_active = false where id = '${OW}';`)
+    + `select 'notices:' || count(*) || ',' || count(distinct creator_id) || ',' || min(details->>'org_name') from public.creator_notices where kind = 'agency_owner_suspended';
+       select 'who:' || string_agg(creator_id::text, ',' order by creator_id) from public.creator_notices where kind = 'agency_owner_suspended';
+       select 'flag:' || owner_active from public.orgs where id = '${ORG}';`
+    + as(A, `select 'creator-reads:' || count(*) from public.creator_notices where kind = 'agency_owner_suspended';`)
+    + service(`update public.profiles set display_name = 'still suspended' where id = '${OW}'; update public.profiles set is_active = true where id = '${OW}';`)
+    + `select 'back:' || owner_active || ',' || (select count(*) from public.creator_notices where kind = 'agency_owner_suspended') from public.orgs where id = '${ORG}';`
+    + service(`update public.profiles set approval_status = 'pending' where id = '${OW}';`)
+    + `select 'unapproved:' || owner_active || ',' || (select count(*) from public.creator_notices where kind = 'agency_owner_suspended') from public.orgs where id = '${ORG}';`,
+    ["notices:5,5,probe 0073 org", `who:${[A, A2, MG, CH, FU].sort().join(",")}`, "flag:false", "creator-reads:1", "back:true,5", "unapproved:false,5"]);
+  expect("WG-13: suspending an account that owns no agency writes no notice",
+    service(`update public.profiles set is_active = false where id in ('${B}', '${MG}', '${A}');`) + `select 'none:' || count(*) from public.creator_notices where kind = 'agency_owner_suspended';`, ["none:0"]);
+  // WG-13: who may read the owner state, and that it cannot be forged.
+  expect("WG-13: a managed creator and a seat read their agency's owner state, also while the owner is suspended; a stranger reads nothing",
+    as(A, `select 'creator:' || name || ',' || owner_active from public.orgs;`) + as(CH, `select 'seat:' || name || ',' || owner_active from public.orgs;`)
+    + as(B, `select 'stranger:' || count(*) from public.orgs;`)
+    + service(`update public.profiles set is_active = false where id = '${OW}';`)
+    + as(A, `select 'creator-after:' || name || ',' || owner_active from public.orgs;`) + as(CH, `select 'seat-after:' || name || ',' || owner_active from public.orgs;`)
+    + as(OW, `select 'owner-after:' || count(*) from public.orgs;`) + as(B, `select 'stranger-after:' || count(*) from public.orgs;`),
+    ["creator:probe 0073 org,true", "seat:probe 0073 org,true", "stranger:0", "creator-after:probe 0073 org,false", "seat-after:probe 0073 org,false", "owner-after:0", "stranger-after:0"]);
+  expect("WG-13: owner_active follows the owner's account, never the request; a creator or seat cannot write the org; a suspended seat reads none",
+    as(OW, `update public.orgs set owner_active = false, name = 'renamed' where id = '${ORG}';`) + `select 'forged:' || name || ',' || owner_active from public.orgs where id = '${ORG}';`
+    + as(A, `update public.orgs set name = 'by creator' where id = '${ORG}';`) + as(CH, `update public.orgs set name = 'by seat' where id = '${ORG}';`)
+    + `select 'kept:' || name from public.orgs where id = '${ORG}';`
+    + `insert into public.orgs (name, owner_id, owner_active) values ('claimed live', '${X}', true); select 'insert:' || owner_active from public.orgs where owner_id = '${X}';`
+    + service(`update public.profiles set is_active = false where id = '${CH}';`) + as(CH, `select 'suspended-seat:' || count(*) from public.orgs;`),
+    ["forged:renamed,true", "kept:renamed", "insert:false", "suspended-seat:0"]);
+  // WG-14: scopes leave with the creator.
+  expect("WG-14: a removed creator's seat scopes are gone and stay gone when it joins again",
+    `insert into public.org_member_creators (member_id, creator_id) values ('${SEAT_CH}', '${A2}');`
+    + as(CH, `select 'before:' || public.can_act_for('${A}', 'chat');`)
+    + as(OW, `select 'remove:' || public.org_remove_creator('${ORG}', '${A}');`)
+    + `select 'rows:' || count(*) filter (where creator_id = '${A}') || ',' || count(*) filter (where creator_id = '${A2}') from public.org_member_creators;`
+    + as(CH, `select 'after:' || public.can_act_for('${A}', 'chat');`)
+    + `update public.profiles set org_id = '${ORG}' where id = '${A}';`
+    + as(CH, `select 'rejoined:' || public.can_act_for('${A}', 'chat') || ',' || public.can_act_for('${A2}', 'chat');`) + as(MG, `select 'manager:' || public.can_act_for('${A}', 'manage');`),
+    ["before:true", "remove:ok", "rows:0,1", "after:false", "rejoined:false,true", "manager:true"]);
+  expect("WG-14: a creator that leaves takes its scopes; a seat that leaves takes its own; any other org_id change does the same",
+    as(A, `select 'leave:' || public.org_leave('${ORG}');`) + `select 'creator-left:' || count(*) from public.org_member_creators where creator_id = '${A}';`
+    + `update public.profiles set org_id = '${ORG}' where id = '${A}'; insert into public.org_member_creators (member_id, creator_id) values ('${SEAT_CH}', '${A}'), ('${SEAT_FU}', '${A}'), ('${SEAT_FU}', '${A2}');`
+    + as(FU, `select 'seat-leave:' || public.org_leave('${ORG}');`) + `select 'seat-left:' || count(*) from public.org_member_creators where member_id = '${SEAT_FU}';`
+    + service(`update public.profiles set org_id = null where id = '${A}';`) + `select 'server-cleared:' || count(*) from public.org_member_creators where creator_id = '${A}';`
+    + as(CH, `select 'gone:' || public.can_act_for('${A}', 'chat');`),
+    ["leave:ok", "creator-left:0", "seat-leave:ok", "seat-left:0", "server-cleared:0", "gone:false"]);
+  refused("WG-14: a stranger cannot remove a creator", as(B, `select case when public.org_remove_creator('${ORG}', '${A}') = 'not_owner' then 1 / 0 end;`), /division by zero/);
+  // WC-09: the empty-game delete.
+  same("WC-09: delete_wheel(uuid) is replaced by delete_wheel(uuid, boolean)", q(`select (to_regprocedure('public.delete_wheel(uuid)') is null)::text || ',' || (to_regprocedure('public.delete_wheel(uuid,boolean)') is not null)::text`), "true,true");
+  expect("WC-09: an empty game is removed; one with a prize or a play answers not_empty and stays; without the flag the old answers hold",
+    `insert into public.wheels (id, creator_id, title, is_active) values ('${W2}', '${A}', 'empty', false), ('${W3}', '${A}', 'one prize', false);
+     insert into public.prizes (id, wheel_id, label, rarity, weight, sort_order) values ('${P3}', '${W3}', 'only', 'common', 10, 0);`
+    + as(B, `select 'stranger:' || public.delete_wheel('${W2}', true);`)
+    + as(CH, `select 'chatter:' || public.delete_wheel('${W2}', true);`)
+    + as(A, `select 'empty:' || public.delete_wheel('${W2}', true); select 'prize:' || public.delete_wheel('${W3}', true); select 'played:' || public.delete_wheel('${WA}', true);
+        select 'old-played:' || public.delete_wheel('${WA}'); select 'named:' || public.delete_wheel(p_wheel => '${W3}', p_only_if_empty => false);`)
+    + `select 'left:' || count(*) filter (where id = '${W2}') || ',' || count(*) filter (where id = '${W3}') || ',' || count(*) filter (where id = '${WA}') from public.wheels;`,
+    ["stranger:not_found", "chatter:not_found", "empty:ok", "prize:not_empty", "played:not_empty", "old-played:has_history", "named:ok", "left:0,0,1"]);
+  refused("WC-09: anon cannot call delete_wheel", `set local role anon; select public.delete_wheel('${WA}', true);`, /permission denied for function delete_wheel/);
+  // CC-06: one statement makes one game live.
+  same("CC-06: set_active_wheel runs as the caller and is closed to anon", q(`select (not p.prosecdef)::text || ',' || has_function_privilege('authenticated', p.oid, 'EXECUTE')::text || ',' || has_function_privilege('anon', p.oid, 'EXECUTE')::text from pg_proc p where p.oid = 'public.set_active_wheel(uuid)'::regprocedure`), "true,true,false");
+  expect("CC-06: the chosen game is the only live one; a stranger, a chatter seat and a suspended creator change nothing; a manager seat may switch; an archived game is refused",
+    `insert into public.wheels (id, creator_id, title, is_active) values ('${W2}', '${A}', 'second', false), ('${W3}', '${A}', 'third', true);
+     insert into public.wheels (id, creator_id, title, is_active) values ('${id("f7")}', '${B}', 'other tenant', true);`
+    + as(B, `select 'stranger:' || public.set_active_wheel('${W2}');`) + as(CH, `select 'chatter:' || public.set_active_wheel('${W2}');`)
+    + `select 'untouched:' || string_agg(is_active::text, ',' order by id) from public.wheels where creator_id = '${A}';`
+    + as(A, `select 'switch:' || public.set_active_wheel('${W2}');`)
+    + `select 'live:' || string_agg(id::text, ',') from public.wheels where creator_id = '${A}' and is_active; select 'tenant:' || is_active from public.wheels where id = '${id("f7")}';`
+    + as(A, `select 'again:' || public.set_active_wheel('${W2}'); select 'missing:' || public.set_active_wheel('${id("f8")}');`)
+    + as(MG, `select 'manager:' || public.set_active_wheel('${WA}');`)
+    + `select 'live2:' || string_agg(id::text, ',') from public.wheels where creator_id = '${A}' and is_active;`
+    + `update public.wheels set archived_at = now(), is_active = false where id = '${W3}';` + as(A, `select 'archived:' || public.set_active_wheel('${W3}');`)
+    + `update public.profiles set is_active = false where id = '${A}';` + as(A, `select 'suspended:' || public.set_active_wheel('${W2}');`)
+    + `select 'live3:' || string_agg(id::text, ',') from public.wheels where creator_id = '${A}' and is_active;`,
+    ["stranger:not_found", "chatter:forbidden", "untouched:true,false,true", "switch:ok", `live:${W2}`, "tenant:true", "again:ok", "missing:not_found", "manager:ok", `live2:${WA}`, "archived:not_found", "suspended:forbidden", `live3:${WA}`]);
+  expect("CC-06: a game that is not ready is refused and the live game stays",
+    `update public.profiles set features = '{"bingo":true}'::jsonb where id = '${A}';
+     insert into public.wheels (id, creator_id, title, is_active, game_kind, game_config, game_ready) values ('${W2}', '${A}', 'draft bingo', false, 'bingo', '{"size":3,"linePrizeId":null}'::jsonb, false);`
+    + as(A, `select 'draft:' || public.set_active_wheel('${W2}');`) + `select 'live:' || string_agg(id::text, ',') from public.wheels where creator_id = '${A}' and is_active;`,
+    ["draft:game_not_ready", `live:${WA}`]);
+  refused("CC-06: anon cannot call set_active_wheel", `set local role anon; select public.set_active_wheel('${WA}');`, /permission denied for function set_active_wheel/);
+
   return { bad, checks };
 }

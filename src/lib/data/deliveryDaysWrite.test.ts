@@ -6,7 +6,7 @@ import { mock } from "node:test";
 // writes it only after the caller's own session proved can_act_for(self,
 // 'manage'), only on the caller's own row, only as 1..60 or null. A creator
 // can never reach another column or another row through this path.
-// CC-06: Set active flags the chosen game before clearing the others.
+// CC-06: Set active is one database call (set_active_wheel), never two table writes.
 
 let passed = 0;
 const check = (label: string, cond: unknown) => { assert.ok(cond, label); passed++; };
@@ -18,12 +18,15 @@ let columnExists = true;
 const sessionWrites: string[] = [];
 const serviceWrites: { table: string; payload: Record<string, unknown>; filters: [string, unknown][] }[] = [];
 const wheelWrites: { payload: Record<string, unknown>; filters: [string, string, unknown][] }[] = [];
+const wheelRpcs: Record<string, unknown>[] = [];
+let switchAnswer: unknown = "ok";
 
 function session() {
   return {
     auth: { getUser: async () => ({ data: { user: signedIn ? { id: me } : null }, error: null }) },
     rpc: async (name: string, args: Record<string, unknown>) => {
       if (name === "can_act_for") return { data: args.target_creator === me ? canManage : false, error: null };
+      if (name === "set_active_wheel") { wheelRpcs.push(args); return { data: switchAnswer, error: null }; }
       throw new Error(`unexpected session rpc ${name}`);
     },
     from: (table: string) => {
@@ -108,10 +111,17 @@ async function main() {
   const { setActiveWheel } = await import("./wheels");
   wheelWrites.length = 0;
   const switched = await setActiveWheel("w2");
-  check("Set active flags the chosen game first, then clears only the others", "ok" in switched && wheelWrites.length === 2
-    && wheelWrites[0].payload.is_active === true && wheelWrites[0].filters.some(([op, c, v]) => op === "eq" && c === "id" && v === "w2")
-    && wheelWrites[1].payload.is_active === false && wheelWrites[1].filters.some(([op, c, v]) => op === "neq" && c === "id" && v === "w2")
-    && wheelWrites.every((w) => w.filters.some(([op, c, v]) => op === "eq" && c === "creator_id" && v === me)));
+  check("Set active is one set_active_wheel call for the chosen game and no table write", "ok" in switched && wheelWrites.length === 0
+    && wheelRpcs.length === 1 && JSON.stringify(wheelRpcs[0]) === JSON.stringify({ p_wheel: "w2" }));
+  switchAnswer = "not_found";
+  const refusedSwitch = await setActiveWheel("w2");
+  check("a refusal from the database is passed on and nothing is written", "error" in refusedSwitch && refusedSwitch.error === "not_found" && wheelWrites.length === 0);
+  switchAnswer = "forbidden";
+  const suspendedSwitch = await setActiveWheel("w2");
+  check("a session that may see but not edit the game is told so", "error" in suspendedSwitch && suspendedSwitch.error === "forbidden" && wheelWrites.length === 0);
+  switchAnswer = "game_not_ready";
+  const draftSwitch = await setActiveWheel("w2");
+  check("a game that is not ready stays off", "error" in draftSwitch && draftSwitch.error === "game_not_ready" && wheelWrites.length === 0);
 
   console.log(`deliveryDaysWrite.test: ${passed} checks passed`);
 }
