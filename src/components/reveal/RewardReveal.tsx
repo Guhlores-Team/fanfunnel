@@ -83,8 +83,9 @@ export default function RewardReveal({
     return () => clearTimeout(t);
   }, [prize.label, tier.label]);
 
-  // WF-01: a claim code is proof the fan may still need. Escape asks first;
-  // the backdrop never closes the card (RF-14): the button does.
+  // WF-01: a claim code is proof the fan may still need. Escape (an easy
+  // slip) asks first; the button is a deliberate choice and closes at once.
+  // The backdrop never closes the card (RF-14).
   const [confirmClose, setConfirmClose] = useState(false);
   const askBeforeClose = !instant && !!claim?.code;
   const requestClose = () => {
@@ -264,7 +265,7 @@ export default function RewardReveal({
           )}
           <button
             ref={shareFirst ? undefined : primaryRef}
-            onClick={confirmClose ? onClose : requestClose}
+            onClick={onClose}
             className={
               shareFirst
                 ? "mt-3 w-full rounded-2xl border border-line py-3 font-semibold text-ink transition hover:brightness-110"

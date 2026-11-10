@@ -32,6 +32,9 @@ import {
 import { resolveFanByToken } from "./fans";
 import { withdrawFanLeaderboardConsent } from "./privacy";
 import { PublicReadError, readFailed, readPublicCreator } from "./publicCreatorRow";
+import { mockGetPublicProfileFields } from "./mockPublicProfile";
+
+const DEMO_CREATOR_ID = "demo-creator";
 import { NEUTRAL_CREATOR_TITLE, publicCreatorTitle } from "@/lib/publicCreator";
 
 // ---------------------------------------------------------------------------
@@ -437,7 +440,12 @@ export async function setFanLeaderboardOptIn(
 export async function getLeaderboard(
   creatorIdOrSlug: string
 ): Promise<LeaderboardView | null> {
-  if (!isSupabaseConfigured()) return mockGetLeaderboard(creatorIdOrSlug);
+  if (!isSupabaseConfigured()) {
+    // WA-02 parity: the demo has one creator, known by its id, its saved
+    // link name and the historical "demo"; anything else has no board.
+    const known = creatorIdOrSlug === DEMO_CREATOR_ID || creatorIdOrSlug === "demo" || creatorIdOrSlug === mockGetPublicProfileFields().slug;
+    return known ? mockGetLeaderboard(creatorIdOrSlug) : null;
+  }
   const cutoff = new Date().toISOString();
 
   const sb = createServiceClient();

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { useLinkPause } from "./LinkPauseProvider";
 import { PAUSED_CONFIRMATION, PAUSE_WARNING, pauseErrorMessage } from "./linkPause";
@@ -106,10 +107,18 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
     }
   };
 
+  // The sheet is rendered into the page's <main>: there it keeps the creator's
+  // brand variables and paints above the game (the footer this button lives
+  // in sits below the game's layer so the age gate can cover it).
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [host, setHost] = useState<Element | null>(null);
+
   return (
     <>
       <button
+        ref={triggerRef}
         onClick={() => {
+          setHost(triggerRef.current?.closest("main") ?? document.body);
           setOpen(true);
           setMode(null);
           setDone(null);
@@ -122,9 +131,9 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
         Safety &amp; privacy
       </button>
 
-      {open && (
+      {open && host && createPortal(
         <div
-          className="fixed inset-0 z-50 flex overflow-y-auto overscroll-contain bg-black/70 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-[65] flex overflow-y-auto overscroll-contain bg-black/70 p-4 text-left backdrop-blur-sm"
           onClick={close}
         >
           <div
@@ -274,7 +283,8 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
               </>
             )}
           </div>
-        </div>
+        </div>,
+        host,
       )}
     </>
   );

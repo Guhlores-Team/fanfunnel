@@ -25,6 +25,10 @@ async function json(res, what) {
 }
 async function newFan(request, name, spins = 3, { ack = true, wheelId } = {}) {
   const fan = await json(await request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name, spins, ...(wheelId ? { wheelId } : {}) } }), `create ${name}`);
+  // A link plays the creator's live game unless it is pinned ("Change game
+  // for this fan only", 0065): pin it so the journey's own wheel is played
+  // without changing what any other fan sees.
+  if (wheelId) await json(await request.post(`${BASE}/api/fans/${fan.fanId}/link-game`, { data: { token: fan.token, wheelId } }), `pin ${name}`);
   if (ack) await json(await acknowledgeFixtureFan(request, fan.token), `ack ${name}`);
   return fan;
 }
@@ -253,7 +257,7 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
         ["/api/leaderboard/opt-in", { token: fan.token, optIn: true }],
         ["/api/self-exclude", { token: fan.token }],
         ["/api/fan/reward", { token: fan.token, shareId: win.shareId }],
-        ["/api/fan/break", { token: fan.token }],
+        ["/api/fan/break", { token: fan.token, duration: "24h" }],
         ["/api/fan-data/export", { token: fan.token }],
         ["/api/fan-data/delete", { token: fan.token, confirm: "DELETE" }],
       ];
@@ -265,17 +269,18 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
       }
       const plain = await request.post(BASE + "/api/fan-data/export", { data: { token: fan.token } });
       assert(plain.status() === 200, `the same route without the cookie still serves the fan (${plain.status()})`);
-      const other = await request.post(BASE + "/api/fan/break", { headers: { cookie: "theme=dark; sb-demo-auth-token-verifier=x" }, data: { token: fan.token } });
-      assert(other.status() !== 403 || (await other.json()).error !== "creator_session", "only a session cookie counts, not a look-alike");
+      const other = await request.post(BASE + "/api/fan-data/export", { headers: { cookie: "theme=dark; sb-demo-auth-token-verifier=x" }, data: { token: fan.token } });
+      assert(other.status() === 200, `only a session cookie counts, not a look-alike (${other.status()})`);
     });
 
     await step("b7 fan ATK-01: a fan cannot delete their data while a prize is still owed", async () => {
-      const fan = await own("B7 owed fan", 1);
+      const owedName = `B7 owed ${randomBytes(3).toString("hex")}`;
+      const fan = await own(owedName, 1);
       await json(await request.post(BASE + "/api/spin", { data: { requestId: randomUUID(), token: fan.token, clientSeed: "owed" } }), "spin");
       const refused = await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } });
       assert(refused.status() === 409 && (await refused.json()).error === "prize_owed", `delete while a prize is owed → 409 prize_owed (${refused.status()})`);
-      const list = await json(await request.get(BASE + "/api/redemptions?status=pending"), "redemptions");
-      const owed = (list.redemptions ?? list.items ?? []).filter((r) => r.fanId === fan.fanId);
+      const list = await json(await request.get(`${BASE}/api/redemptions?status=pending&q=${encodeURIComponent(owedName)}`), "redemptions");
+      const owed = (list.items ?? []).filter((r) => r.fanName === owedName);
       assert(owed.length >= 1, "the owed prize is in the queue");
       for (const r of owed) await json(await request.patch(`${BASE}/api/redemptions/${r.id}`, { data: { status: "fulfilled" } }), "fulfil");
       const ok = await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } });
@@ -447,8 +452,12 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
         await gate.getByRole("link", { name: "Terms of Service" }).click();
         await page.getByTestId("legal-sheet").waitFor({ timeout: 8000 });
         assert(page.url() === before, "the page did not navigate");
-        const frame = page.frameLocator("[data-testid='legal-sheet'] iframe");
-        await frame.locator("h1").first().waitFor({ timeout: 10000 });
+        const text = page.getByTestId("legal-sheet-body");
+        await text.waitFor({ timeout: 10000 });
+        assert(/Terms of Service/.test(await text.locator("h1").first().textContent()), "the Terms text is shown in the sheet");
+        const unsafe = await text.evaluate((el) => ({ scripts: el.querySelectorAll("script, iframe, form, style").length, handlers: [...el.querySelectorAll("*")].filter((n) => [...n.attributes].some((a) => /^on/i.test(a.name))).length, sameTab: [...el.querySelectorAll("a[href]")].filter((a) => a.target !== "_blank").length }));
+        assert(unsafe.scripts === 0 && unsafe.handlers === 0 && unsafe.sameTab === 0, `nothing executable is carried over and links open in a new tab (${JSON.stringify(unsafe)})`);
+        assert((await page.locator("iframe").count()) === 0, "no frame is used (the CSP forbids them)");
         await page.getByTestId("legal-sheet-close").click();
         await page.getByTestId("legal-sheet").waitFor({ state: "hidden", timeout: 5000 });
         assert(await gate.isVisible(), "the gate is still there to finish");
