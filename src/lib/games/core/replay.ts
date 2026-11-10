@@ -3,15 +3,16 @@ import { canonicalJson, parseFairTrace, type V3ReplayInput } from "../wheel/fair
 import { BINGO_LINE_MASKS, type BonusTrace } from "../bingo/engine";
 import { hashGamePoolSnapshot, parseGamePoolSnapshot, type GamePoolSnapshot } from "./gameProof";
 import { drawGame, type GameDraw, type GameTrace } from "./play";
+import { hasOwn } from "@/lib/fan/uuid";
 
 const obj = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 export function parseGameTrace(raw: unknown): GameTrace | null {
-  if (!obj(raw) || Object.keys(raw).length !== 3 || !["excluded", "won", "bonuses"].every((key) => Object.hasOwn(raw, key))) return null;
+  if (!obj(raw) || Object.keys(raw).length !== 3 || !["excluded", "won", "bonuses"].every((key) => hasOwn(raw, key))) return null;
   const primary = parseFairTrace({ excluded: raw.excluded, won: raw.won });
   if (!primary || primary.excluded.length > 50 || new Set(primary.excluded).size !== primary.excluded.length || !Array.isArray(raw.bonuses) || raw.bonuses.length > 4) return null;
   const bonuses: BonusTrace[] = [];
   for (const b of raw.bonuses) {
-    if (!obj(b) || Object.keys(b).length !== 3 || !["line", "excluded", "won"].every((key) => Object.hasOwn(b, key)) ||
+    if (!obj(b) || Object.keys(b).length !== 3 || !["line", "excluded", "won"].every((key) => hasOwn(b, key)) ||
       !Number.isInteger(b.line) || (b.line as number) < 0 || (b.line as number) >= BINGO_LINE_MASKS.length) return null;
     const trace = parseFairTrace({ excluded: b.excluded, won: b.won });
     if (!trace || trace.excluded.length > 50 || new Set(trace.excluded).size !== trace.excluded.length) return null;

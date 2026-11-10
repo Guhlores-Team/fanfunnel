@@ -5,6 +5,7 @@ import { fanEngagementAllowed } from "@/lib/play/playGuard";
 import { useFanBreak, useLinkPause } from "./LinkPauseProvider";
 import { installNudgeSnoozed, isIosDevice, snoozeInstallNudge } from "./installNudge";
 import { currentInAppBrowser } from "./inAppBrowser";
+import { NEUTRAL_APP_NAME } from "@/lib/pwa/config";
 
 /** Chrome's install event (not in the DOM lib types). */
 interface BeforeInstallPromptEvent extends Event {
@@ -110,12 +111,13 @@ export default function InstallNudge({ armed }: { armed: boolean }) {
       data-testid="install-nudge"
       className="lift-in w-full rounded-2xl border p-4 text-left"
       style={{
-        borderColor: "color-mix(in oklab, var(--brand) 40%, transparent)",
-        background: "color-mix(in oklab, var(--brand) 8%, var(--color-surface))",
+        borderColor: "color-mix(in oklab, var(--brand-ui) 40%, transparent)",
+        background: "color-mix(in oklab, var(--brand-ui) 8%, var(--color-surface))",
       }}
     >
       <h2 id={titleId} className="text-sm font-extrabold text-ink">
-        Add {name} to your home screen <span aria-hidden="true">⭐</span>
+        {/* WF-14: the neutral install name means nothing to a fan; say "this page". */}
+        Add {name === NEUTRAL_APP_NAME ? "this page" : name} to your home screen <span aria-hidden="true">⭐</span>
       </h2>
       <p className="mt-1 text-sm text-muted text-pretty">
         Open this page in one tap, like an app.
@@ -125,7 +127,7 @@ export default function InstallNudge({ armed }: { armed: boolean }) {
           <button
             type="button"
             onClick={install}
-            className="btn-brand inline-flex min-h-11 items-center justify-center rounded-xl px-5 text-sm font-extrabold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+            className="btn-brand inline-flex min-h-11 items-center justify-center rounded-xl px-5 text-sm font-extrabold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
           >
             Install
           </button>
@@ -135,7 +137,7 @@ export default function InstallNudge({ armed }: { armed: boolean }) {
             onClick={() => setGuideOpen((o) => !o)}
             aria-expanded={guideOpen}
             aria-controls={guideId}
-            className="btn-brand inline-flex min-h-11 items-center justify-center rounded-xl px-5 text-sm font-extrabold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+            className="btn-brand inline-flex min-h-11 items-center justify-center rounded-xl px-5 text-sm font-extrabold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
           >
             How
           </button>
@@ -143,7 +145,7 @@ export default function InstallNudge({ armed }: { armed: boolean }) {
         <button
           type="button"
           onClick={dismiss}
-          className="inline-flex min-h-11 items-center justify-center rounded-xl border border-line px-4 text-sm font-semibold text-ink transition-colors hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+          className="inline-flex min-h-11 items-center justify-center rounded-xl border border-line px-4 text-sm font-semibold text-ink transition-colors hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
         >
           Not now
         </button>
@@ -191,7 +193,7 @@ function StepBadge({ n }: { n: number }) {
     <span
       aria-hidden="true"
       className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-extrabold"
-      style={{ background: "var(--brand)", color: "var(--brand-ink)" }}
+      style={{ background: "var(--brand-ui)", color: "var(--brand-ink)" }}
     >
       {n}
     </span>

@@ -93,7 +93,7 @@ export default function InstantRewardHistory({ token, onView, autoOpen = false }
         onClick={toggle}
         aria-expanded={open}
         aria-controls={panelId}
-        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
         data-testid="reward-history-toggle"
       >
         All instant rewards <span aria-hidden="true">{open ? "−" : "+"}</span>
@@ -102,7 +102,7 @@ export default function InstantRewardHistory({ token, onView, autoOpen = false }
         <div id={panelId} className="border-t border-line p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <p className="min-w-0 flex-1 basis-40 text-xs text-muted">Browse all the instant rewards you&apos;ve won, including earlier wins.</p>
-            <button type="button" onClick={() => void loadPage(null)} disabled={loading} data-testid="reward-history-refresh" className="min-h-11 rounded-xl border border-line px-3 py-2 text-xs font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] disabled:opacity-60">Refresh rewards</button>
+            <button type="button" onClick={() => void loadPage(null)} disabled={loading} data-testid="reward-history-refresh" className="min-h-11 rounded-xl border border-line px-3 py-2 text-xs font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)] disabled:opacity-60">Refresh rewards</button>
           </div>
           {wins.length > 0 && (
             <ul className="space-y-2">
@@ -115,7 +115,7 @@ export default function InstantRewardHistory({ token, onView, autoOpen = false }
                   <button
                     type="button"
                     onClick={() => onView(win, win.label)}
-                    className="min-h-11 rounded-xl border border-line px-3 py-2 text-xs font-semibold text-ink hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+                    className="min-h-11 rounded-xl border border-line px-3 py-2 text-xs font-semibold text-ink hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
                     data-testid="reward-history-view"
                   >
                     View reward<span className="sr-only"> for {win.label}</span>
@@ -129,11 +129,11 @@ export default function InstantRewardHistory({ token, onView, autoOpen = false }
           {error && (
             <div className="mt-3">
               <p className="text-sm text-muted" role="alert">{error}</p>
-              <button type="button" onClick={() => void loadPage(attemptedCursor.current)} className="mt-2 min-h-11 rounded-xl border border-line px-3 py-2 text-sm font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]">Try again</button>
+              <button type="button" onClick={() => void loadPage(attemptedCursor.current)} className="mt-2 min-h-11 rounded-xl border border-line px-3 py-2 text-sm font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]">Try again</button>
             </div>
           )}
           {!loading && !error && nextCursor && (
-            <button type="button" onClick={() => void loadPage(nextCursor)} data-testid="reward-history-more" className="mt-3 min-h-11 w-full rounded-xl border border-line px-4 py-2 text-sm font-semibold text-ink hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]">
+            <button type="button" onClick={() => void loadPage(nextCursor)} data-testid="reward-history-more" className="mt-3 min-h-11 w-full rounded-xl border border-line px-4 py-2 text-sm font-semibold text-ink hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]">
               Load older rewards
             </button>
           )}

@@ -42,6 +42,10 @@ export function fanDataErrorMessage(code: unknown, action: "export" | "delete"):
       return "This link isn't connected to any data any more.";
     case "not_allowed":
       return "The demo fan can't be deleted. Try it with a link the creator made for you.";
+    case "prize_owed":
+      return "A prize you won is still on its way, and deleting your data now would cancel it. Ask the creator to deliver or cancel it first (use Message on your link, or report it under Safety & privacy), then delete.";
+    case "creator_session":
+      return "You're signed in as this fan's creator. Fans do this themselves from their own link; sign out or use a private window.";
     default:
       return action === "export"
         ? "Couldn't prepare your download. Try again."

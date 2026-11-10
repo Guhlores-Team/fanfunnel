@@ -29,7 +29,7 @@ function pinRefusal(error: string | undefined, seat?: Seat): string {
 
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
 const ghostBtn =
-  "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] border border-line px-3 text-[12.5px] font-semibold text-muted transition-colors hover:border-[color-mix(in_oklab,var(--brand)_35%,var(--color-line))] hover:text-ink disabled:opacity-50 aria-disabled:opacity-50";
+  "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] border border-line px-3 text-[12.5px] font-semibold text-muted transition-colors hover:border-[color-mix(in_oklab,var(--brand-ui)_35%,var(--color-line))] hover:text-ink disabled:opacity-50 aria-disabled:opacity-50";
 
 // 24x24 line icons (Command Center set); the megaphone is the sidebar's
 // Campaigns glyph so the empty state matches the nav item.
@@ -61,7 +61,7 @@ function Glyph({ d, size = 14, className = "" }: { d: string; size?: number; cla
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <h2 className="flex items-center gap-[9px] text-[15px] font-bold tracking-[-0.01em] text-ink">
-      <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand)]" />
+      <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand-ui)]" />
       {children}
     </h2>
   );
@@ -354,7 +354,7 @@ function CampaignsWorkspace({ seat, onOpenGame }: { seat?: Seat; onOpenGame?: (w
         </div>
       ) : rows.length === 0 ? (
         <div className="flex flex-col items-center gap-2.5 rounded-2xl border border-dashed border-[var(--hair)] px-6 py-12 text-center sm:px-8">
-          <span className="grid h-12 w-12 place-items-center rounded-[13px] bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] text-brand">
+          <span className="grid h-12 w-12 place-items-center rounded-[13px] bg-[color-mix(in_oklab,var(--brand-ui)_12%,transparent)] text-brand">
             <Glyph d={ICON.megaphone} size={22} />
           </span>
           <p className="text-[15px] font-bold text-ink">{seat ? `${seat.displayName} has no campaigns yet` : "No campaigns yet"}</p>
@@ -721,7 +721,7 @@ function PlaysLine({ plays, onOpenGame, whose }: { plays: CampaignGame<WheelSumm
           type="button"
           onClick={() => onOpenGame(target.id)}
           aria-label={`Edit game ${target.title}`}
-          className="ml-auto inline-flex min-h-8 items-center rounded-[8px] border border-line px-2.5 text-[12px] font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+          className="ml-auto inline-flex min-h-8 items-center rounded-[8px] border border-line px-2.5 text-[12px] font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]"
         >
           Edit game
         </button>

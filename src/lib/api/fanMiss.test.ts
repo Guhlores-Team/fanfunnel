@@ -94,6 +94,9 @@ async function main() {
   check("/spin/<token> never refuses before its lookup and counts only a genuine miss", !/missBlocked|fanMissBlockedFor/.test(page) && page.includes("await noteFanMiss(") && page.indexOf("await getFanPass(") < page.indexOf("await noteFanMiss("));
   const fanToken = readFileSync(new URL("src/lib/api/fanToken.ts", root), "utf8");
   check("withFanToken hands the token to the miss budget so hits are remembered", /\}, token\);/.test(fanToken));
+  // WF-03 / WA-02: an over-budget address's miss gets the honest "too many
+  // attempts" page, any other miss the branded 404; both after the lookup.
+  check("/spin/<token> sends an over-budget miss to the busy page, else to the branded 404", /const \{ over, retryAfter \} = await noteFanMiss\(await visitorIp\(\)\);\s*if \(over\) linkAttemptsBlocked\(retryAfter\);\s*linkNotFound\("spin", token\);/.test(page));
 
   console.log(`fanMiss.test: ${passed} checks passed`);
 }

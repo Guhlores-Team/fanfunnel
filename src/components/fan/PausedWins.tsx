@@ -52,7 +52,7 @@ export default function PausedWins({ token, view }: { token: string; view: Pause
                     )}
                     {win.reward && (
                       <details className="mt-2 text-sm">
-                        <summary className="min-h-11 cursor-pointer py-3 font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]">
+                        <summary className="min-h-11 cursor-pointer py-3 font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]">
                           Show your saved reward<span className="sr-only"> for {win.label}</span>
                         </summary>
                         <InstantReward reward={win.reward} />

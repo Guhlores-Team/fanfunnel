@@ -31,7 +31,8 @@ svc.run = (statement, options) => {
   if (statement.table === "fan_passes" && statement.op === "select" && statement.columns?.includes("fan:fans(") && result.data && !Array.isArray(result.data)) {
     const row = result.data as Record<string, unknown>;
     const owner = [fan, other].find(candidate => candidate.id === pass.fan_id && row.fan_id === pass.fan_id);
-    result = { ...result, data: { ...row, fan: owner ? { blocked_at: fan.blocked_at, acked_at: fan.acked_at, acked_terms_version: fan.acked_terms_version } : null } };
+    result = { ...result, data: { ...row, fan: owner ? { blocked_at: fan.blocked_at, acked_at: fan.acked_at, acked_terms_version: fan.acked_terms_version } : null,
+      creator: { is_active: true, approval_status: "approved", role: "creator" } } };
   }
   return inconsistentRead && statement.table === "fan_passes" && statement.op === "select"
     ? { ...result, error: { message: "inconsistent read" } } : result;

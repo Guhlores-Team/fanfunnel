@@ -33,7 +33,7 @@ export default function Funnel({ funnel }: { funnel: ConversionFunnel }) {
             </div>
             <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-surface-2" aria-hidden="true">
               <div
-                className="h-full rounded-full bg-[var(--brand)]"
+                className="h-full rounded-full bg-[var(--brand-ui)]"
                 style={{ width: `${widthPct}%` }}
               />
             </div>

@@ -14,7 +14,7 @@ export default function Sparkline({
   height = 56,
   format,
   noun = "Spin",
-  color = "var(--brand)",
+  color = "var(--brand-ui)",
 }: {
   data: DailyCount[];
   height?: number;

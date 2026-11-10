@@ -160,7 +160,7 @@ export default function AdminErrors() {
               onClick={() => setStatus(s)}
               className={`min-h-8 rounded-[8px] px-3 text-xs font-semibold transition-colors ${
                 status === s
-                  ? "bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-ink ring-1 ring-[color-mix(in_oklab,var(--brand)_40%,transparent)]"
+                  ? "bg-[color-mix(in_oklab,var(--brand-ui)_18%,transparent)] text-ink ring-1 ring-[color-mix(in_oklab,var(--brand-ui)_40%,transparent)]"
                   : "text-muted hover:text-ink"
               }`}
             >
@@ -301,7 +301,7 @@ function ErrorRow({
             <pre
               tabIndex={0}
               aria-label="Stack trace (redacted)"
-              className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-base/60 p-3 font-mono text-[11px] leading-relaxed text-muted"
+              className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-canvas/60 p-3 font-mono text-[11px] leading-relaxed text-muted"
             >
               {item.stack}
             </pre>

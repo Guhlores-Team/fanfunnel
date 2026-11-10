@@ -33,6 +33,7 @@ import { firstEmbedded, toWinDelivery, type WinDelivery } from "@/lib/fan/delive
 import { notifyCreator } from "@/lib/push/notify";
 import { publicCreatorTitle } from "@/lib/publicCreator";
 import { creatorCanHostPlay } from "./creatorPlayable";
+import { claimCodeFor } from "@/lib/rewards/claimCode";
 
 // ---------------------------------------------------------------------------
 // Public API. Transparently uses the in-memory mock store when Supabase isn't
@@ -240,6 +241,9 @@ async function readFanPassView(token: string): Promise<FanPassView | null> {
       imageUrl: w.prize_image_url ?? null,
       ...(hasEmbeddedRow(w.reward) ? { instant: true } : {}),
       ...winDelivery(w.redemption),
+      // WF-01: the code lives on the card AND under "Your wins" (it is a server
+      // HMAC of the share id, so re-showing it to the link holder is safe).
+      ...(claimCodeFor(w.share_id) ? { claimCode: claimCodeFor(w.share_id)! } : {}),
     })),
     wishlist,
     happyHour,

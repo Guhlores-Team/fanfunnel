@@ -57,7 +57,7 @@ function TagEditor({
           {tags.map((t) => (
             <span
               key={t}
-              className="inline-flex items-center gap-1.5 rounded-full border border-[color-mix(in_oklab,var(--brand)_40%,transparent)] bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] py-[3px] pl-[11px] pr-1.5 text-xs font-semibold text-[color-mix(in_oklab,var(--brand-text)_72%,white)]"
+              className="inline-flex items-center gap-1.5 rounded-full border border-[color-mix(in_oklab,var(--brand-ui)_40%,transparent)] bg-[color-mix(in_oklab,var(--brand-ui)_12%,transparent)] py-[3px] pl-[11px] pr-1.5 text-xs font-semibold text-[color-mix(in_oklab,var(--brand-text)_72%,white)]"
             >
               {t}
               <button
@@ -86,7 +86,7 @@ function TagEditor({
               aria-pressed={active}
               className={`rounded-full border px-3 py-[3px] text-xs font-semibold transition disabled:opacity-50 max-sm:min-h-11 max-sm:px-3.5 ${
                 active
-                  ? "border-[var(--brand)] bg-[var(--brand)] text-[var(--brand-ink)]"
+                  ? "border-[var(--brand-ui)] bg-[var(--brand-ui)] text-[var(--brand-ink)]"
                   : "border-line text-muted hover:text-ink"
               }`}
             >

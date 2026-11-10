@@ -1,4 +1,6 @@
 import { auditActionMatches } from "@/components/admin/auditLabels";
+import { fanLinkExpired } from "./unavailable";
+import { claimCodeFor } from "@/lib/rewards/claimCode";
 import { bingoReadyError } from "./bingo";
 import { mockBingoStore,currentMockBingo,mockBingoEditError,commitMockBingo,eraseMockBingo,clearMockBingo } from "./mockBingo";
 import { gameProposal,addBonusFailure } from "./gameProposal";
@@ -697,6 +699,28 @@ function fanForToken(token: string): MockFan | null {
   return fanId ? store.fans.get(fanId) ?? null : null;
 }
 
+/**
+ * The fan behind a token for the routes that write to the creator's account
+ * or reach their devices (chat, wishlist, board opt-in, visit check-in, the
+ * age gate). Parity with resolveFanByToken: a suspended creator's link is not
+ * active, the answer the fan page gives (mockGetFanPass), so nothing is written.
+ */
+function fanReachingCreator(token: string): MockFan | null {
+  const fan = mockDemoCreatorActive() ? fanForToken(token) : null;
+  return fan && mockLinkLive(fan, token) ? fan : null;
+}
+
+/**
+ * Parity with fanLinkLive (PR-13): the link behind this token is switched on,
+ * not paused by its fan and not past its expiry. An expired link answers like
+ * a switched-off one on every token-keyed fan route.
+ */
+function mockLinkLive(fan: MockFan, token: string): boolean {
+  if (fan.selfExcludedAt) return false;
+  const pass = fan.passes?.find((p) => p.token === token);
+  return !pass || (pass.isActive !== false && !mockPassExpired(pass));
+}
+
 // --- Wheel resolution -------------------------------------------------------
 
 function wheelCreatedAt(id: string): string {
@@ -1228,7 +1252,8 @@ export async function mockGetFanPass(
     wheel: applyFocusStock(toPublicWheel(wheel), modifierDisplay.stock),
     spinsRemaining: pass?.spinsRemaining ?? fan.spinsRemaining,
     recentWins: fan.wins.slice(0, 50).map(win => ({ label: win.label, rarity: win.rarity, emoji: win.emoji, color: win.color,
-      at: win.at, shareId: win.shareId, imageUrl: win.imageUrl, ...(win.instant ? { instant: true } : {}), ...mockWinDelivery(win.shareId) })),
+      at: win.at, shareId: win.shareId, imageUrl: win.imageUrl, ...(win.instant ? { instant: true } : {}), ...mockWinDelivery(win.shareId),
+      ...(claimCodeFor(win.shareId) ? { claimCode: claimCodeFor(win.shareId)! } : {}) })),
     wishlist: wishlistFor(fan.id),
     happyHour: mockGetActiveHappyHour(wheel.id),
     referral: { code: fan.referralCode, bonusPerReferral: REFERRAL_BONUS },
@@ -1293,6 +1318,11 @@ export async function mockGameFixture(token: string, clientSeed: string, targetP
 }
 
 type MockSpinSuccess = import("@/lib/games/wheel/types").SpinResult & { shareId: string; nextSpinHash: string };
+/** RF-01 parity: the fan-safe prize list of the link's resolved game, in order. */
+function mockSpinPrizes(pass: Parameters<typeof mockResolvedSpinWheelId>[0]): import("@/lib/games/wheel/types").PublicPrize[] {
+  const wheel = store.wheels.get(mockResolvedSpinWheelId(pass)) ?? activeWheel();
+  return toPublicWheel(wheel).prizes;
+}
 export async function mockSpin(token: string, clientSeed = "", requestId: string = crypto.randomUUID(), publishedSeedHash?: string): Promise<MockSpinSuccess | import("./shared").SpinError> {
   requestId = requestId.toLowerCase();
   const found = passForToken(token);
@@ -1309,7 +1339,7 @@ export async function mockSpin(token: string, clientSeed = "", requestId: string
       if (existing.token !== token || existing.hash !== hash) return { error: "db_error" as const };
       if (!existing.result) return { error: "spin_pending" as const };
       if("error" in existing.result)return existing.result;
-      const response={ ...structuredClone(existing.result), replayed: true, spinsRemaining: found.pass.spinsRemaining, nextSpinHash: found.pass.nextServerSeedHash!, ...mockFanFocusDisplay(token),
+      const response={ ...structuredClone(existing.result), replayed: true, prizes: mockSpinPrizes(found.pass), spinsRemaining: found.pass.spinsRemaining, nextSpinHash: found.pass.nextServerSeedHash!, ...mockFanFocusDisplay(token),
         ...(existing.result.gameKind==="bingo"?{bingoCard:structuredClone(currentMockBingo(found.fan.id,mockResolvedSpinWheelId(found.pass))?.state??null)}:{}),
         play: countPlay(found.fan.spinTimes ?? []), reminderDue: reminderDue(countPlay(found.fan.spinTimes ?? []).today, found.fan.playReminderDaily ?? null) } as MockSpinSuccess;
       return mockRecordRewardDisclosures(token,response)?response:{error:"spin_pending" as const};
@@ -1317,6 +1347,7 @@ export async function mockSpin(token: string, clientSeed = "", requestId: string
     const attempt = { token, fanId: found.fan.id, hash, createdAt: new Date().toISOString() } as { token: string; fanId: string; hash: string; createdAt?: string; finishedAt?: string; result?: import("@/lib/games/wheel/types").SpinResult | import("./shared").SpinError };
     state.attempts.set(requestId, attempt);
     const result = await mockSpinLocked(token, clientSeed, requestId, publishedSeedHash);
+    if (!("error" in result)) result.prizes = mockSpinPrizes(found.pass);
     attempt.result = structuredClone(result);
     if (!("error" in result) || result.error !== "spin_pending") attempt.finishedAt = new Date().toISOString();
     return "error" in result || mockRecordRewardDisclosures(token,result)?result:{error:"spin_pending" as const};
@@ -1333,7 +1364,7 @@ export async function mockReadSpinAttempt(token: string, intent: SpinIntent): Pr
   if (attempt.token !== token || attempt.hash !== hash) return { status: "conflict" };
   if (!attempt.result) return { status: "pending" };
   if("error"in attempt.result)return {status:"declined",error:attempt.result.error};
-  const result={ ...structuredClone(attempt.result), replayed: true, spinsRemaining: found.pass.spinsRemaining, nextSpinHash: found.pass.nextServerSeedHash!, ...mockFanFocusDisplay(token),
+  const result={ ...structuredClone(attempt.result), replayed: true, prizes: mockSpinPrizes(found.pass), spinsRemaining: found.pass.spinsRemaining, nextSpinHash: found.pass.nextServerSeedHash!, ...mockFanFocusDisplay(token),
     ...(attempt.result.gameKind==="bingo"?{bingoCard:structuredClone(currentMockBingo(found.fan.id,mockResolvedSpinWheelId(found.pass))?.state??null)}:{}),
     play: countPlay(found.fan.spinTimes ?? []), reminderDue: reminderDue(countPlay(found.fan.spinTimes ?? []).today, found.fan.playReminderDaily ?? null) };
   return mockRecordRewardDisclosures(token,result)?{status:"committed",result}:{status:"pending"};
@@ -3154,8 +3185,12 @@ export async function mockFireWebhooks(
 
 /** Mark the fan behind a token as having acknowledged the age-gate / ToS. */
 export function mockAckFan(token: string): { ok: true } | { error: string } {
-  const fan = fanForToken(token);
+  const fan = fanReachingCreator(token);
   if (!fan) return { error: "not_found" };
+  // Parity with record_fan_ack (0073): only a live link is acknowledged
+  // (fanReachingCreator); a blocked fan answers like a link that is not there
+  // too (`unavailable`), and nothing is stamped.
+  if (fan.blockedAt) return { error: "not_found" };
   fan.ackedAt = new Date().toISOString();
   fan.ackedTermsVersion = LEGAL.version;
   return { ok: true };
@@ -3187,7 +3222,7 @@ export function mockUpdateFanLink(fanId: string, token: string, patch: { active?
   return { ok: true };
 }
 /** PR-13: an expired link reads like a switched-off one. */
-const mockPassExpired = (pass: { expiresAt?: string | null }) => !!pass.expiresAt && Date.parse(pass.expiresAt) <= Date.now();
+const mockPassExpired = (pass: { expiresAt?: string | null }) => fanLinkExpired(pass.expiresAt);
 
 export function mockSetFanLinkGame(fanId: string, token: string, wheelId: string | null): { ok: true } | { error: string } {
   const fan = store.fans.get(fanId);
@@ -3206,6 +3241,8 @@ function liveFanForToken(token: string): MockFan | { error: "not_found" | "block
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
   if (fan.selfExcludedAt || fan.blockedAt) return { error: "blocked" };
+  // PR-13: a switched-off or expired link is not_found, as on the Supabase path.
+  if (!mockLinkLive(fan, token)) return { error: "not_found" };
   return fan;
 }
 
@@ -3301,9 +3338,10 @@ export function mockReportParties(creatorId: string, fanId: string | null): {
 
 export function mockAddWishlist(
   token: string,
-  prizeLabel: string
+  prizeLabel: string,
+  prizeId: string | null = null
 ): { ok: true } | { error: string } {
-  const fan = fanForToken(token);
+  const fan = fanReachingCreator(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
@@ -3312,7 +3350,8 @@ export function mockAddWishlist(
 
   // Validate the label exists on the fan's active wheel; snapshot its rarity.
   const wheel = store.wheels.get(mockResolveActiveWheelId()) ?? activeWheel();
-  const prize = wheel.prizes.find((p) => p.label === label);
+  // RF-15: by id when sent (two prizes may share a label), else by label.
+  const prize = prizeId ? wheel.prizes.find((p) => p.id === prizeId && p.label === label) : wheel.prizes.find((p) => p.label === label);
   if (!prize) return { error: "unknown_prize" };
 
   // Idempotent: don't double-add the same label for the same fan.
@@ -3336,7 +3375,7 @@ export function mockRemoveWishlist(
   token: string,
   prizeLabel: string
 ): { ok: true } | { error: string } {
-  const fan = fanForToken(token);
+  const fan = fanReachingCreator(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
@@ -3510,7 +3549,7 @@ export function mockSetFanLeaderboardOptIn(
   optIn: boolean,
   handle?: string
 ): { ok: true } | { error: string } {
-  const fan = fanForToken(token);
+  const fan = optIn ? fanReachingCreator(token) : fanForToken(token); // opting out always works
   if (!fan || (optIn && fan.selfExcludedAt)) return { error: "not_found" };
   if (optIn && fan.blockedAt) return { error: "blocked" }; // A4: opting out always works
   if (optIn && fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2
@@ -3599,7 +3638,7 @@ export function mockSendFanMessage(
   token: string,
   body: string
 ): { ok: true } | { error: "not_found" | "blocked" | "needs_ack" | "locked" | "empty" } {
-  const fan = fanForToken(token);
+  const fan = fanReachingCreator(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
@@ -3620,7 +3659,8 @@ export function mockSendFanMessage(
 /** A fan's full thread (oldest first); marks creator→fan messages read. */
 export function mockGetFanMessages(token: string): ChatMessage[] | { error: "blocked" | "needs_ack" } {
   const fan = fanForToken(token);
-  if (!fan) return [];
+  // PR-13: a switched-off or expired link reads as an empty thread, as getFanMessages does.
+  if (!fan || !mockLinkLive(fan, token)) return [];
   if (fan.blockedAt) return { error: "blocked" }; // I7: parity with getFanMessages
   if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2
   const now = new Date().toISOString();
@@ -3738,7 +3778,7 @@ export function mockSetChatSettings(input: {
 export function mockEnsureChatIntro(
   token: string
 ): { ok: true } | { error: string } {
-  const fan = fanForToken(token);
+  const fan = fanReachingCreator(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
@@ -3765,7 +3805,7 @@ export function mockEnsureChatIntro(
 export function mockSendChatOutro(
   token: string
 ): { ok: true } | { error: string } {
-  const fan = fanForToken(token);
+  const fan = fanReachingCreator(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
@@ -3885,7 +3925,7 @@ export function mockRecordCheckin(
   localDate: unknown,
   now: Date = new Date()
 ): ({ ok: true } & CheckinResult) | { error: string } {
-  const fan = fanForToken(token);
+  const fan = fanReachingCreator(token);
   if (!fan || fan.selfExcludedAt) return { error: "not_found" };
   if (!glowGateOpen(mockGlowGateInput(fan), now)) return { error: "not_allowed" };
   const day = clampCheckinDay(localDate, now);
@@ -4027,6 +4067,11 @@ function mockFanByAnyToken(token: string): { fan: MockFan; pass: MockPass | null
   return fan ? { fan, pass: fan.passes?.find((p) => p.token === token) ?? null } : null;
 }
 
+/** ATK-01: whether a token belongs to any demo fan (the demo creator owns them all). */
+export function mockTokenHasCreator(token: string): boolean {
+  return mockFanByAnyToken(token) !== null;
+}
+
 /** Why a link no longer opens, when its tombstone says (else null → 404). */
 export async function mockGetFanLinkStatus(
   token: string
@@ -4096,6 +4141,7 @@ export function mockExportFanData(token: string): FanDataExport | null {
       rarity: w.rarity,
       wheel: null,
       shareId: w.shareId ?? null,
+      claimCode: claimCodeFor(w.shareId),
       fairness: {
         version: w.fairVersion ?? null,
         serverSeed: w.serverSeed ?? null,
@@ -4166,8 +4212,8 @@ export async function mockDeleteFanData(
   if (!hit) return { error: "not_found" };
   const { fan } = hit;
   if (fan.id === "demo-fan") return { error: "not_allowed" };
-  // ATK-01 (widened) parity: a fan who is still owed a prize cannot be erased.
-  if (store.redemptions.some((r) => r.fanId === fan.id && r.status === "pending")) return { error: "prize_owed" };
+  // ATK-01 (widened): a prize still owed is settled before the fan is erased.
+  if (store.redemptions.some((r) => r.fanId === fan.id && (r.status === "pending" || r.status === "in_progress"))) return { error: "prize_owed" };
   const spinsKept = fan.wins.length;
   await mockDeleteFanWithTombstones(fan.id);
   privacy.notices.unshift({ id: crypto.randomUUID(), spinsKept, at: new Date().toISOString() });

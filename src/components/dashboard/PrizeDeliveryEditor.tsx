@@ -31,7 +31,7 @@ const ERROR: Record<string, string> = {
   code_too_long: `Keep each code to ${MAX_CODE_LENGTH} characters or fewer.`,
   too_many_codes_per_paste: `Add no more than ${MAX_CODES_PER_PASTE} codes at a time.`,
 };
-const button = "inline-flex min-h-9 items-center justify-center rounded-lg border border-[var(--hair)] px-3 text-xs font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:cursor-not-allowed disabled:opacity-50";
+const button = "inline-flex min-h-9 items-center justify-center rounded-lg border border-[var(--hair)] px-3 text-xs font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)] disabled:cursor-not-allowed disabled:opacity-50";
 
 /** Delivery is saved separately: reward values must never enter a wheel draft. */
 export default function PrizeDeliveryEditor({
@@ -160,7 +160,7 @@ export default function PrizeDeliveryEditor({
 
   return (
     <div data-testid="prize-delivery-editor" data-prize-id={prizeId} className="mt-3 min-w-0 rounded-[10px] border border-[var(--hair)] p-3 [background:var(--s2)]">
-      <button type="button" data-testid="delivery-toggle" aria-expanded={open} aria-controls={`${id}-panel`} onClick={toggleOpen} className="flex min-h-9 w-full items-center justify-between gap-2 rounded text-left text-xs font-semibold text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]">
+      <button type="button" data-testid="delivery-toggle" aria-expanded={open} aria-controls={`${id}-panel`} onClick={toggleOpen} className="flex min-h-9 w-full items-center justify-between gap-2 rounded text-left text-xs font-semibold text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]">
         <span>Delivery · {LABEL[delivery]}</span><span aria-hidden="true">{open ? "−" : "+"}</span>
       </button>
       {open && (
@@ -202,7 +202,7 @@ export default function PrizeDeliveryEditor({
                     <p id={`${id}-codes-help`} className="text-xs text-muted">Stock follows the unused code count. Full codes are never shown back after saving. Add up to {MAX_CODES_PER_PASTE} at a time.</p>
                   </>
                 )}
-                {removesCodes && <label className="flex items-start gap-2 rounded-lg border border-amber-300/30 p-2.5 text-xs text-ink"><input data-testid="delivery-remove-codes-confirm" type="checkbox" checked={confirmedRemoval} onChange={(e) => setConfirmedRemoval(e.target.checked)} className="mt-0.5 shrink-0 accent-[var(--brand)]" /><span>Remove {view.codesLeft} unused code{view.codesLeft === 1 ? "" : "s"} and change delivery. Rewards already won remain available to their winners.</span></label>}
+                {removesCodes && <label className="flex items-start gap-2 rounded-lg border border-amber-300/30 p-2.5 text-xs text-ink"><input data-testid="delivery-remove-codes-confirm" type="checkbox" checked={confirmedRemoval} onChange={(e) => setConfirmedRemoval(e.target.checked)} className="mt-0.5 shrink-0 accent-[var(--brand-ui)]" /><span>Remove {view.codesLeft} unused code{view.codesLeft === 1 ? "" : "s"} and change delivery. Rewards already won remain available to their winners.</span></label>}
                 <div className="flex flex-wrap gap-2">
                   <button type="button" data-testid="delivery-save" onClick={() => void save()} disabled={!dirty || (kind !== "manual" && !view.ready) || (removesCodes && !confirmedRemoval)} className={`${button} btn-brand`}>{busy ? "Saving…" : kind === "codes" ? "Add codes" : "Save delivery"}</button>
                   {dirty && <button type="button" onClick={() => { setKind(view.delivery); setValue(view.value ?? ""); setCodes(""); setConfirmedRemoval(false); setError(""); setStatus(""); }} className={button}>Discard delivery changes</button>}

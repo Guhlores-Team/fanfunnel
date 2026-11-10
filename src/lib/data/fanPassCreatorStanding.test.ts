@@ -115,7 +115,9 @@ async function main() {
   const intent = { requestId: crypto.randomUUID(), clientSeed: "seed" };
   l5.statusReply = { status: "declined", error: "stale" };
   const s5 = await readSpinAttempt("tok", intent, l5.client());
-  check("…and its status read is declined, not pending", s5.status === "declined" && "error" in s5 && s5.error === "db_error");
+  // The status read keeps the reason, so the page can say the spin was never
+  // finished and nothing was used up (spinErrors `stale`); it is terminal too.
+  check("…and its status read is declined as stale, not pending", s5.status === "declined" && "error" in s5 && s5.error === "stale");
   l5.statusReply = { status: "not_found" };
   check("0073 RS-01: a status read for a token no link carries is not_found", (await readSpinAttempt("tok", intent, l5.client())).status === "not_found");
   l5.statusReply = { status: "unavailable" };

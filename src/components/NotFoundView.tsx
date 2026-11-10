@@ -42,7 +42,7 @@ export default function NotFoundView({ children }: { children?: ReactNode }) {
                 "0 24px 60px -20px rgba(236,72,153,0.5), inset 0 0 0 4px rgba(255,255,255,0.12)",
             }}
           />
-          <div className="absolute inset-[40%] grid place-items-center rounded-full bg-base text-base ring-4 ring-white/15">
+          <div className="absolute inset-[40%] grid place-items-center rounded-full bg-canvas text-canvas ring-4 ring-white/15">
             <span className="text-lg">🎡</span>
           </div>
         </div>

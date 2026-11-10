@@ -102,7 +102,7 @@ export const SECTION_META: Record<Tab, [title: string, subtitle: string]> = {
 
 export function CountBadge({ n }: { n: number }) {
   return (
-    <span className="tnum grid h-[19px] min-w-[19px] place-items-center rounded-full bg-[var(--brand)] px-[5px] text-[11px] font-bold text-[var(--brand-ink)]">
+    <span className="tnum grid h-[19px] min-w-[19px] place-items-center rounded-full bg-[var(--brand-ui)] px-[5px] text-[11px] font-bold text-[var(--brand-ink)]">
       {n}
     </span>
   );
@@ -195,11 +195,11 @@ export function Sidebar({
   // Desktop only: below `lg` the bottom MobileTabBar + MoreSheet replace it.
   return (
     <aside
-      className="relative z-20 grid max-lg:hidden grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-3 border-b border-[#1f1b27] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--brand)_8%,#0c0a0e),#0c0a0e_38%)] px-4 pb-3 pt-4 lg:sticky lg:top-0 lg:flex lg:h-[100dvh] lg:w-[252px] lg:shrink-0 lg:flex-col lg:items-stretch lg:gap-[18px] lg:border-b-0 lg:border-r lg:px-4 lg:py-[22px]"
+      className="relative z-20 grid max-lg:hidden grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-3 border-b border-[#1f1b27] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--brand-ui)_8%,#0c0a0e),#0c0a0e_38%)] px-4 pb-3 pt-4 lg:sticky lg:top-0 lg:flex lg:h-[100dvh] lg:w-[252px] lg:shrink-0 lg:flex-col lg:items-stretch lg:gap-[18px] lg:border-b-0 lg:border-r lg:px-4 lg:py-[22px]"
     >
       {/* Wordmark */}
       <div className="flex min-w-0 items-center gap-2.5 lg:px-2">
-        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[9px] bg-[var(--brand)] text-[var(--brand-ink)] shadow-[0_6px_18px_-6px_color-mix(in_oklab,var(--brand)_70%,transparent)]">
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[9px] bg-[var(--brand-ui)] text-[var(--brand-ink)] shadow-[0_6px_18px_-6px_color-mix(in_oklab,var(--brand-ui)_70%,transparent)]">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d={ICON.editor} />
           </svg>
@@ -214,7 +214,7 @@ export function Sidebar({
 
       {/* Workspace pill — name + email (or the demo-mode notice). */}
       <div className="surface-raised hidden items-center gap-2.5 rounded-xl p-2.5 lg:flex">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-sm font-bold text-ink">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand-ui)_18%,transparent)] text-sm font-bold text-ink">
           {initials}
         </span>
         <div className="min-w-0 flex-1">
@@ -256,14 +256,14 @@ export function Sidebar({
                       onKeyDown={(e) => onKeyDown(e, id)}
                       className={`${itemBase} w-full ${
                         on
-                          ? "bg-[color-mix(in_oklab,var(--brand)_13%,transparent)] font-semibold text-ink"
+                          ? "bg-[color-mix(in_oklab,var(--brand-ui)_13%,transparent)] font-semibold text-ink"
                           : "font-medium text-[#b8b2c0] hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] hover:text-ink"
                       }`}
                     >
                       <span
                         aria-hidden="true"
                         className={`absolute inset-x-2.5 bottom-0 h-[3px] rounded-t-[3px] lg:inset-x-auto lg:bottom-[9px] lg:left-0 lg:top-[9px] lg:h-auto lg:w-[3px] lg:rounded-none lg:rounded-r-[3px] ${
-                          on ? "bg-[var(--brand)]" : "bg-transparent"
+                          on ? "bg-[var(--brand-ui)]" : "bg-transparent"
                         }`}
                       />
                       <Icon d={ICON[id]} className={on ? "text-brand" : "text-[#8b8494]"} />
@@ -315,7 +315,7 @@ export function SetupChecklistButton({ onClick }: { onClick: () => void }) {
       type="button"
       onClick={onClick}
       title="Show the setup checklist again"
-      className="flex min-h-[38px] w-full items-center gap-[11px] rounded-[10px] px-2.5 text-[13px] font-semibold text-brand transition-colors duration-150 hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)]"
+      className="flex min-h-[38px] w-full items-center gap-[11px] rounded-[10px] px-2.5 text-[13px] font-semibold text-brand transition-colors duration-150 hover:bg-[color-mix(in_oklab,var(--brand-ui)_12%,transparent)]"
     >
       <Icon d={ICON.setup} size={18} />
       <span className="max-sm:sr-only">Get started</span>
@@ -357,7 +357,7 @@ export function TopBar({
         <form
           role="search"
           aria-label="Search fans"
-          className="hidden w-[220px] items-center gap-2 rounded-[10px] border border-line bg-surface px-[11px] py-2 focus-within:border-[var(--brand)] md:flex"
+          className="hidden w-[220px] items-center gap-2 rounded-[10px] border border-line bg-surface px-[11px] py-2 focus-within:border-[var(--brand-ui)] md:flex"
           onSubmit={(e) => {
             e.preventDefault();
             onSearch(q.trim());

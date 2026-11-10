@@ -15,7 +15,7 @@ export default async function AgencyPage() {
     if (!user) redirect("/login?next=/agency");
   }
   return (
-    <main className="min-h-[100dvh] overflow-x-clip bg-base text-ink" style={brandVars("#ec4899")}>
+    <main className="min-h-[100dvh] overflow-x-clip bg-canvas text-ink" style={brandVars("#ec4899")}>
       <AgencyClient />
     </main>
   );

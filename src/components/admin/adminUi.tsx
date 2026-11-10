@@ -54,7 +54,7 @@ export function SectionTitle({ id, children, extra }: { id: string; children: Re
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#1f1b27] px-4 py-3.5 sm:px-[18px] sm:py-4">
       <h2 id={id} className="flex items-center gap-[9px] text-[15px] font-bold tracking-[-0.01em] text-ink">
-        <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand)]" />
+        <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand-ui)]" />
         {children}
       </h2>
       {extra}

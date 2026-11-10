@@ -26,6 +26,7 @@ import { gameSwitchingA11yStates } from "./game-switching-a11y.mjs";
 import { safetyA11yStates } from "./safety-a11y.mjs";
 import { qaB5A11yStates } from "./qa-b5.mjs";
 import { fanDevicesA11yStates } from "./fan-devices.mjs";
+import { fanB7A11yStates } from "./fan-b7.mjs";
 import { trustB7A11yStates } from "./trust-b7.mjs";
 
 const AXE_SRC = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
@@ -315,7 +316,11 @@ const openSafety = (then) => async (page) => {
 };
 const openDeletedLink = async (page) => {
   const token = await mintFanLink(page.request, 1);
-  const res = await page.request.post(BASE + "/api/fan-data/delete", { data: { token, confirm: "DELETE" } });
+  // From an address of this scan's own: deletes are budgeted per address (ten
+  // an hour), so the scan shares no bucket with the journeys or with an
+  // earlier scan on the same server.
+  const from = `198.18.${Math.floor(Math.random() * 256)}.${1 + Math.floor(Math.random() * 254)}`;
+  const res = await page.request.post(BASE + "/api/fan-data/delete", { headers: { "x-real-ip": from }, data: { token, confirm: "DELETE" } });
   if (!res.ok()) throw new Error(`could not delete the scan fan (${res.status()})`);
   await goto(page, `/spin/${token}`, 1200);
   await page.getByRole("heading", { name: "This link was deleted" }).waitFor({ timeout: 8000 });
@@ -353,6 +358,8 @@ const PAGES = [
   // b6 fan devices: the age gate and Safety sheet at 200% text and in
   // landscape, each prep proving the primary action is on screen and tappable.
   ...fanDevicesA11yStates(),
+  // b7: the in-app hint, the legal sheet over the gate, the spin cooldown.
+  ...fanB7A11yStates(),
   ...trustB7A11yStates(DASH_ADVISORY), // TS-06: the announced Terms change on fan pages and the dashboard, and the admin card
   { path: "/", name: "landing" },
   { path: "/login", name: "login" },

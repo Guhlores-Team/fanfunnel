@@ -18,10 +18,11 @@ function check(label: string, cond: boolean) {
 
 // --- scriptable fake Supabase client for the verify page -------------------------
 type Op = { name: string; args: unknown[] };
-type Resp = { data: unknown; error: { message: string } | null };
+type Resp = { data: unknown; error: { code?: string; message: string } | null };
 type Handler = (ops: Op[]) => Resp;
 const ok = (data: unknown): Resp => ({ data, error: null });
-const fail = (message: string): Resp => ({ data: null, error: { message } });
+// OPS3-06: only Postgres 42703 (undefined column) means an older schema.
+const missingColumn = (message: string): Resp => ({ data: null, error: { code: "42703", message } });
 
 function fakeClient(handlers: Record<string, Handler>) {
   const builder = (table: string) => {
@@ -103,7 +104,7 @@ async function renderVerify(row: Record<string, unknown> | null, opts: { pre0047
   serviceClient = fakeClient({
     spins: (ops) => {
       const sel = String(ops.find((o) => o.name === "select")?.args[0] ?? "");
-      if (opts.pre0047 && /fair_version/.test(sel)) return fail('column spins.fair_version does not exist');
+      if (opts.pre0047 && /fair_version/.test(sel)) return missingColumn('column spins.fair_version does not exist');
       return ok(row);
     },
     // Batch 6 N2: /verify reads the creator through readPublicCreator (active, approved).

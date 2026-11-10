@@ -4,7 +4,7 @@ import { withSuspendedReason } from "@/lib/onboarding/suspended";
 import { LoadError, loadJson } from "@/lib/hooks/loadJson";
 import { STALE_GAME_MESSAGE, staleGameCheck } from "./staleGame";
 import { publicTextCheck } from "@/lib/publicText";
-import { BRAND_TOO_DARK_MESSAGE, brandColorContrastOk } from "@/lib/theme";
+import { BRAND_DARK_HINT, brandColorContrastOk } from "@/lib/theme";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import GamePreview from "./GamePreview";
@@ -100,9 +100,9 @@ const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(-
 const cap = "text-[11px] font-semibold uppercase tracking-[0.05em] text-muted";
 const capSm = "text-[10px] font-semibold uppercase tracking-[0.05em] text-muted";
 const iconBtn =
-  "grid h-[34px] w-[34px] shrink-0 place-items-center rounded-[9px] text-muted transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]";
+  "grid h-[34px] w-[34px] shrink-0 place-items-center rounded-[9px] text-muted transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]";
 const secondaryBtn =
-  "inline-flex min-h-[38px] items-center gap-1.5 rounded-[10px] border border-[var(--hair)] px-4 text-[13.5px] font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]";
+  "inline-flex min-h-[38px] items-center gap-1.5 rounded-[10px] border border-[var(--hair)] px-4 text-[13.5px] font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]";
 // Native color input drawn as a plain swatch (the hex field next to it is the
 // typed source of truth; a half-typed hex never reaches the picker).
 const swatchInput =
@@ -259,18 +259,8 @@ export default function WheelEditor({
   // the saved snapshot), so the guard holds while another section is open.
   const validation = useMemo(() => {
     const base = validateWheelDraft(wheel);
-    // PA-01: a brand color changed to one that vanishes on the dark fan page
-    // is an error on the field (a stored one never blocks other edits).
-    if (!base.brandColor && wheel.brandColor && !brandColorContrastOk(wheel.brandColor)) {
-      let stored: string | undefined;
-      try { stored = (JSON.parse(savedJson) as WheelConfig).brandColor; } catch { stored = undefined; }
-      if (wheel.brandColor.trim().toLowerCase() !== (stored ?? "").trim().toLowerCase()) {
-        base.brandColor = BRAND_TOO_DARK_MESSAGE;
-        base.issues.push({ key: "brandColor", message: `Brand color: ${BRAND_TOO_DARK_MESSAGE}` });
-      }
-    }
     return { ...base, baseIssues: base.issues, issues: gameDraftIssues(wheel as CreatorGameWheel, base.issues) };
-  }, [wheel, savedJson]);
+  }, [wheel]);
   // WC-11: an unfinished, never-published bingo game saves as a draft.
   const draftOnly = canSaveBingoDraft(gameWheel, savedJson, validation.baseIssues);
   // Errors show for a field once it has been left (blur) or after a save
@@ -748,7 +738,7 @@ export default function WheelEditor({
                   data-testid="game-reload-latest"
                   onClick={() => void reloadLatest()}
                   disabled={reloading}
-                  className="font-semibold text-ink underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                  className="font-semibold text-ink underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]"
                 >
                   {reloading ? "Reloading…" : "Reload (discards the edits here)"}
                 </button>
@@ -766,7 +756,7 @@ export default function WheelEditor({
               <button
                 type="button"
                 onClick={focusFirstIssue}
-                className="font-semibold text-ink underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                className="font-semibold text-ink underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]"
               >
                 Go to it
               </button>
@@ -829,6 +819,10 @@ export default function WheelEditor({
                 </div>
               </Lbl>
               <FieldError id={errId("brandColor")} message={errFor("brandColor", validation.brandColor)} />
+              {/* PA-01: a very dark color still saves; the fan page lifts it for buttons and outlines. */}
+              {!validation.brandColor && !!wheel.brandColor && !brandColorContrastOk(wheel.brandColor) && (
+                <p data-testid="brand-dark-hint" className="mt-1 text-xs text-muted text-pretty">{BRAND_DARK_HINT}</p>
+              )}
             </div>
           </div>
 
@@ -924,10 +918,10 @@ export default function WheelEditor({
               aria-describedby="wf-show-stock-hint"
               data-testid="show-stock-switch"
               onClick={() => setWheel({ ...wheel, showStock: !showsStock(wheel) })}
-              className="shrink-0 rounded-full border border-line p-0.5 transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+              className="shrink-0 rounded-full border border-line p-0.5 transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
             >
               <span
-                className={`relative block h-6 w-11 rounded-full transition-colors ${showsStock(wheel) ? "bg-[var(--brand)]" : "bg-line"}`}
+                className={`relative block h-6 w-11 rounded-full transition-colors ${showsStock(wheel) ? "bg-[var(--brand-ui)]" : "bg-line"}`}
               >
                 <span
                   className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform ${showsStock(wheel) ? "translate-x-5" : "translate-x-0"}`}
@@ -947,7 +941,7 @@ export default function WheelEditor({
               empty state + "Add your first prize" instead of a bare list. */}
           {wheel.prizes.length === 0 && (
             <div className="mt-4 flex flex-col items-center gap-2.5 rounded-[14px] border border-dashed border-[var(--hair)] px-6 py-9 text-center">
-              <span className="grid h-11 w-11 place-items-center rounded-xl bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] text-brand">
+              <span className="grid h-11 w-11 place-items-center rounded-xl bg-[color-mix(in_oklab,var(--brand-ui)_12%,transparent)] text-brand">
                 <Glyph d={P.gift} size={20} strokeWidth={1.6} />
               </span>
               <p className="text-[14.5px] font-bold text-ink">No prizes yet</p>
@@ -1012,7 +1006,7 @@ export default function WheelEditor({
                     dragIdx === index ? "scale-[0.99] opacity-50" : ""
                   } ${
                     dragOverIdx === index
-                      ? "shadow-[0_0_0_2px_var(--brand)]"
+                      ? "shadow-[0_0_0_2px_var(--brand-ui)]"
                       : ""
                   }`}
                 >
@@ -1024,7 +1018,7 @@ export default function WheelEditor({
                         type="button"
                         onClick={() => movePrize(index, index - 1)}
                         disabled={index === 0}
-                        className="grid h-8 w-8 place-items-center rounded-[7px] text-muted transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-30"
+                        className="grid h-8 w-8 place-items-center rounded-[7px] text-muted transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)] disabled:opacity-30"
                         aria-label="Move prize up"
                         title="Move up"
                       >
@@ -1034,7 +1028,7 @@ export default function WheelEditor({
                         type="button"
                         onClick={() => movePrize(index, index + 1)}
                         disabled={index === wheel.prizes.length - 1}
-                        className="grid h-8 w-8 place-items-center rounded-[7px] text-muted transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-30"
+                        className="grid h-8 w-8 place-items-center rounded-[7px] text-muted transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)] disabled:opacity-30"
                         aria-label="Move prize down"
                         title="Move down"
                       >
@@ -1051,7 +1045,7 @@ export default function WheelEditor({
                       onPointerUp={() => setDragArmedIdx((v) => (v === index ? null : v))}
                       aria-label="Drag to reorder prize"
                       title="Drag to reorder (or use the ▲ ▼ buttons)"
-                      className="grid h-8 w-8 cursor-grab touch-none select-none place-items-center rounded-[7px] bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] active:cursor-grabbing"
+                      className="grid h-8 w-8 cursor-grab touch-none select-none place-items-center rounded-[7px] bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)] active:cursor-grabbing"
                     >
                       <Glyph d={P.grip} size={14} />
                     </button>
@@ -1136,7 +1130,7 @@ export default function WheelEditor({
                   </div>
                   <FieldError id={errId(k("label"))} message={errFor(k("label"), pe.label)} />
                   <label className="mt-3 flex items-start gap-2.5 text-xs text-ink">
-                    <input type="checkbox" data-testid="prize-boostable" checked={p.boostable === true} onChange={(e) => updatePrize(p.id, { boostable: e.target.checked })} className="mt-0.5 shrink-0 accent-[var(--brand)]" />
+                    <input type="checkbox" data-testid="prize-boostable" checked={p.boostable === true} onChange={(e) => updatePrize(p.id, { boostable: e.target.checked })} className="mt-0.5 shrink-0 accent-[var(--brand-ui)]" />
                     <span><span className="font-semibold">Boostable</span><span className="mt-0.5 block text-muted">Allow new Focus and Chase packs for this prize. Existing packs keep their promise.{p.stock != null ? " Each Chase pack reserves one unit when granted." : ""}</span></span>
                   </label>
 
@@ -1286,7 +1280,7 @@ export default function WheelEditor({
                     type="button"
                     onClick={() => setMoreOpen((m) => ({ ...m, [p.id]: !more }))}
                     aria-expanded={more}
-                    className="mt-2.5 inline-flex items-center gap-1 rounded-md text-[11px] font-semibold text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] max-sm:mt-1 max-sm:min-h-11"
+                    className="mt-2.5 inline-flex items-center gap-1 rounded-md text-[11px] font-semibold text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)] max-sm:mt-1 max-sm:min-h-11"
                   >
                     <Glyph
                       d={P.chevron}
@@ -1306,7 +1300,7 @@ export default function WheelEditor({
                             key={emo}
                             type="button"
                             onClick={() => updatePrize(p.id, { emoji: emo })}
-                            className="rounded-md border border-[var(--hair)] px-1.5 py-0.5 text-sm transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                            className="rounded-md border border-[var(--hair)] px-1.5 py-0.5 text-sm transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]"
                             aria-label={`Use emoji ${emo}`}
                             title={`Use ${emo}`}
                           >
@@ -1358,7 +1352,7 @@ export default function WheelEditor({
               type="button"
               onClick={() => setShowLibrary((v) => !v)}
               aria-expanded={showLibrary}
-              className="flex w-full items-center justify-between gap-3 rounded-xl px-4 py-3.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+              className="flex w-full items-center justify-between gap-3 rounded-xl px-4 py-3.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]"
             >
               <span className="flex items-center gap-2 text-sm font-semibold text-ink">
                 <Glyph d={P.book} size={17} strokeWidth={1.7} className="text-brand" />

@@ -89,7 +89,7 @@ export default function SeatWorkspace() {
               type="button"
               aria-selected={active === t}
               onClick={() => setTab(t)}
-              className={`rounded-lg px-3 py-2 text-sm font-semibold ${active === t ? "bg-[var(--brand)] text-[var(--brand-ink)]" : "border border-line text-muted"}`}
+              className={`rounded-lg px-3 py-2 text-sm font-semibold ${active === t ? "bg-[var(--brand-ui)] text-[var(--brand-ink)]" : "border border-line text-muted"}`}
             >
               {t === "inbox" ? "Inbox" : "Prizes to fulfil"}
             </button>
@@ -172,7 +172,7 @@ function SeatInbox({ creatorId, onError, onDraft }: { creatorId: string; onError
               className={`w-full rounded-lg px-3 py-2 text-left text-sm ${fanId === t.fanId ? "bg-surface-2" : "hover:bg-surface-2"}`}
             >
               <span className="font-semibold">{t.fanName}</span>
-              {t.unread > 0 && <span className="ml-2 rounded-full bg-[var(--brand)] px-2 text-xs text-[var(--brand-ink)]">{t.unread}</span>}
+              {t.unread > 0 && <span className="ml-2 rounded-full bg-[var(--brand-ui)] px-2 text-xs text-[var(--brand-ink)]">{t.unread}</span>}
               <span className="block truncate text-muted">{t.lastBody}</span>
             </button>
           </li>
@@ -182,7 +182,7 @@ function SeatInbox({ creatorId, onError, onDraft }: { creatorId: string; onError
         <div>
           <ol className="max-h-80 space-y-2 overflow-y-auto">
             {messages.map((m) => (
-              <li key={m.id} className={`rounded-lg px-3 py-2 text-sm ${m.sender === "creator" ? "ml-8 bg-[color-mix(in_oklab,var(--brand)_18%,transparent)]" : "mr-8 bg-surface-2"}`}>{m.body}</li>
+              <li key={m.id} className={`rounded-lg px-3 py-2 text-sm ${m.sender === "creator" ? "ml-8 bg-[color-mix(in_oklab,var(--brand-ui)_18%,transparent)]" : "mr-8 bg-surface-2"}`}>{m.body}</li>
             ))}
           </ol>
           <label htmlFor={replyId} className="mt-3 block text-sm text-muted">Reply</label>

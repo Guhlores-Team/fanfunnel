@@ -24,7 +24,7 @@ export default async function AdminPage() {
       // list); a creator who mistypes a URL gets a plain "not for you" page.
       if (!(process.env.ADMIN_EMAILS ?? "").trim()) {
         return (
-          <main className="grid min-h-[100dvh] place-items-center overflow-x-clip bg-base px-4">
+          <main className="grid min-h-[100dvh] place-items-center overflow-x-clip bg-canvas px-4">
             <div className="w-full max-w-sm rounded-2xl border border-[var(--hair)] [background:var(--s1)] px-6 py-8 text-center text-ink shadow-[var(--lift)]">
               <h1 className="text-xl font-bold tracking-[-0.02em]">Admin only</h1>
               <p className="mt-2 text-[13.5px] text-muted">This page is for FanFunnel admins. Your dashboard is where your games live.</p>
@@ -36,7 +36,7 @@ export default async function AdminPage() {
         );
       }
       return (
-        <main className="grid min-h-[100dvh] place-items-center overflow-x-clip bg-base px-4">
+        <main className="grid min-h-[100dvh] place-items-center overflow-x-clip bg-canvas px-4">
           <AdminClaim />
         </main>
       );

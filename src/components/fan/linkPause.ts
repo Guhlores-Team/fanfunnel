@@ -31,7 +31,9 @@ export function spinControl({ spinsRemaining, busy, paused, onBreak = false, spi
     return { canSpin: false, label: "On a break", balanceLabel: String(spinsRemaining) };
   }
   if (spinPending) {
-    return { canSpin: false, label: "Check your last spin", balanceLabel: "Checking…" };
+    // RF-16: the last known number stays on show; the pending request has
+    // not been deducted on this page, so nothing is assumed either way.
+    return { canSpin: false, label: "Check your last spin", balanceLabel: String(spinsRemaining) };
   }
   return {
     canSpin: spinsRemaining > 0 && !busy,

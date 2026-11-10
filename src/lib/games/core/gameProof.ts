@@ -5,6 +5,7 @@ import type { ModifierOptions } from "@/lib/focus/modifiers";
 import { buildFocusPoolSnapshot, canonicalJson, parsePoolSnapshot, type PoolSnapshot } from "../wheel/fairnessV3";
 import { sha256Hex } from "../wheel/fairness";
 import { parseBingoCell as cell, parseBingoCells as cells, parseBingoState } from "../bingo/state";
+import { hasOwn } from "@/lib/fan/uuid";
 export { parseBingoState } from "../bingo/state";
 import { bingoEligible, isRareBonus, safeCell, BINGO_FULL_MASK, type BingoCell, type BingoState, type BonusPool, type BonusPrize } from "../bingo/engine";
 
@@ -19,7 +20,7 @@ export type GamePoolSnapshot =
   | (GameBase & { game: "bingo"; gameRules: "bingo-v1"; gameConfig: BingoConfig; bingo: { catalog: BingoCell[]; before: BingoState | null; bonus: BonusPool } });
 
 const obj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-const keys = (v: Record<string, unknown>, expected: string[]) => Object.keys(v).length === expected.length && expected.every((k) => Object.hasOwn(v, k));
+const keys = (v: Record<string, unknown>, expected: string[]) => Object.keys(v).length === expected.length && expected.every((k) => hasOwn(v, k));
 const count = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
 const id = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= 256;
 const sorted = <T extends { id: string }>(values: T[]): T[] => values.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);

@@ -39,7 +39,7 @@ import type { CreatorTheme, PresetBackground, ThemeBackground } from "./config";
 export const THEME_INK = "#f4f1f6"; // globals.css --color-ink
 export const THEME_MUTED = "#a09aa8"; // globals.css --color-muted
 export const THEME_SURFACE = "#16131c"; // globals.css --color-surface
-export const THEME_BASE = APP_BASE; // globals.css --color-base
+export const THEME_BASE = APP_BASE; // globals.css --color-canvas
 /** WCAG AA for body text. */
 export const MIN_TEXT_CONTRAST = 4.5;
 /** Solved to this (a hair above AA) so browser dithering can't tip a pixel under. */

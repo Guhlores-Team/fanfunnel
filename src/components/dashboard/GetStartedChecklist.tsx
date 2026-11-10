@@ -34,7 +34,7 @@ export default function GetStartedChecklist({
     <section aria-labelledby="first-steps" data-testid="first-steps" className="relative">
       <div className="mb-3.5 flex items-baseline justify-between gap-3">
         <h2 id="first-steps" className="flex items-center gap-[9px] text-base font-bold tracking-[-0.01em] text-ink">
-          <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand)]" />
+          <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand-ui)]" />
           Your first steps
         </h2>
         <span className="tnum text-xs text-muted" aria-live="polite">
@@ -53,7 +53,7 @@ export default function GetStartedChecklist({
             <span
               aria-hidden="true"
               className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 ${
-                s.done ? "border-[var(--brand)] bg-[var(--brand)] text-[var(--brand-ink)]" : "border-[#2a2533] bg-transparent"
+                s.done ? "border-[var(--brand-ui)] bg-[var(--brand-ui)] text-[var(--brand-ink)]" : "border-[#2a2533] bg-transparent"
               }`}
             >
               {s.done && (

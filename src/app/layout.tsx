@@ -39,7 +39,7 @@ export default function RootLayout({
       lang="en"
       className={`${display.variable} ${sans.variable} ${mono.variable} h-full antialiased`}
     >
-      <body className="min-h-[100dvh] flex flex-col bg-base text-ink">
+      <body className="min-h-[100dvh] flex flex-col bg-canvas text-ink">
         <DebugErrorBoundary>
           {process.env.NEXT_PUBLIC_ENABLE_DEBUG === "1" && <CrashCanary />}
           {children}

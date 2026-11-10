@@ -148,7 +148,9 @@ async function main() {
     assert.ok(teaser, "teaser");
     const api = await publicWheel(creatorId);
     assert.ok(api.status === 200, "public wheel API → 200");
-    const bio = await data.getPublicProfileBySlug("some-slug");
+    // The demo answers only its own link name (WA-02 parity); the Supabase
+    // fake answers any slug.
+    const bio = await data.getPublicProfileBySlug(useSupabase ? "some-slug" : "demo-creator");
     assert.ok(bio, "link-in-bio profile");
     return {
       page: wire(pass).wheel.prizes,

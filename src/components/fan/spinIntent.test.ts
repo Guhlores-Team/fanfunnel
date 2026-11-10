@@ -30,6 +30,12 @@ async function main() {
   check("HTTP failure cannot authorize a decline", classifySpinStatus({ status: "declined", error: "no_spins" }, false).kind === "keep");
   check("only successful authoritative decline releases identity", classifySpinStatus({ status: "declined", error: "no_spins" }, true).kind === "declined");
   check("committed outcome is recovered without starting play", classifySpinStatus({ status: "committed", result: { attemptId: first.requestId } }, true).kind === "committed");
+  // 0073 (CC-08 / CC-02): an attempt the ledger aged out (stale) or refused
+  // because the link went away (blocked) releases the saved identity.
+  const stale = classifySpinStatus({ status: "declined", error: "stale" }, true);
+  check("a stale attempt is a terminal decline with its own reason", stale.kind === "declined" && stale.error === "stale");
+  check("a blocked attempt is a terminal decline", classifySpinStatus({ status: "declined", error: "blocked" }, true).kind === "declined");
+  check("an unknown decline reason still keeps the identity", classifySpinStatus({ status: "declined", error: "mystery" }, true).kind === "keep");
   const token = "fan-secret-link-token";
   const key = await spinIntentKey(token);
   check("storage key hashes bearer token", key.length > 64 && !key.includes(token));

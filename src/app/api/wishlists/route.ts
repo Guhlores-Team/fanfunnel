@@ -17,16 +17,19 @@ export async function DELETE(req: Request) {
 
 async function mutate(
   req: Request,
-  fn: (token: string, prizeLabel: string) => Promise<{ ok: true } | { error: string }>
+  fn: (token: string, prizeLabel: string, prizeId: string | null) => Promise<{ ok: true } | { error: string }>
 ) {
-  const body = await parseJsonBody<{ token?: string; prizeLabel?: string }>(req);
+  const body = await parseJsonBody<{ token?: string; prizeLabel?: string; prizeId?: string }>(req);
   if (body === BAD_REQUEST) return badRequest();
 
   let token: string;
   let prizeLabel: string;
+  let prizeId: string | null;
   try {
     token = str(body.token, { max: 200, required: true })!;
     prizeLabel = str(body.prizeLabel, { max: 200, required: true })!;
+    // RF-15: optional; the label alone is ambiguous when two prizes share it.
+    prizeId = str(body.prizeId, { max: 64 }) ?? null;
   } catch (e) {
     if (e instanceof ValidationError) return badRequest(e.code);
     throw e;
@@ -36,7 +39,7 @@ async function mutate(
   const limited = await rateLimitOr429("wish:" + token + ":" + clientIp(req), 30, 60_000);
   if (limited) return limited;
 
-  const result = await fn(token, prizeLabel);
+  const result = await fn(token, prizeLabel, prizeId);
   if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);
 }

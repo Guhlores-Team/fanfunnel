@@ -93,7 +93,7 @@ export default function PackPresets({
             className={
               "inline-flex min-h-9 max-w-full flex-wrap items-center rounded-[9px] border px-3 py-1.5 text-xs font-semibold text-ink transition-colors disabled:opacity-60 " +
               (active
-                ? "border-[color-mix(in_oklab,var(--brand)_60%,transparent)] bg-[color-mix(in_oklab,var(--brand)_12%,transparent)]"
+                ? "border-[color-mix(in_oklab,var(--brand-ui)_60%,transparent)] bg-[color-mix(in_oklab,var(--brand-ui)_12%,transparent)]"
                 : "border-line hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)]")
             }
           >
@@ -105,7 +105,7 @@ export default function PackPresets({
               {p.bonusSpins > 0 ? ` (+${p.bonusSpins})` : ""}
             </span>
             {!modifier && count > 1 && (
-              <span className="tnum ml-1.5 rounded-full bg-[var(--brand)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--brand-ink)]">
+              <span className="tnum ml-1.5 rounded-full bg-[var(--brand-ui)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--brand-ink)]">
                 ×{count}
               </span>
             )}

@@ -82,7 +82,7 @@ export default function MoreSheet({
         <div className="flex items-center gap-3 px-5 pb-3">
           <span
             aria-hidden="true"
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-sm font-bold text-ink"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand-ui)_18%,transparent)] text-sm font-bold text-ink"
           >
             {initials}
           </span>
@@ -121,7 +121,7 @@ export default function MoreSheet({
                         }}
                         className={`${rowBase} ${
                           on
-                            ? "bg-[color-mix(in_oklab,var(--brand)_13%,transparent)] font-semibold text-ink"
+                            ? "bg-[color-mix(in_oklab,var(--brand-ui)_13%,transparent)] font-semibold text-ink"
                             : "font-medium text-[#d4cfdb] hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)]"
                         }`}
                       >
@@ -156,7 +156,7 @@ export default function MoreSheet({
                   onClose();
                   onSetup();
                 }}
-                className={`${rowBase} font-semibold text-brand hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)]`}
+                className={`${rowBase} font-semibold text-brand hover:bg-[color-mix(in_oklab,var(--brand-ui)_12%,transparent)]`}
               >
                 <Icon d={ICON.setup} size={20} />
                 Get started

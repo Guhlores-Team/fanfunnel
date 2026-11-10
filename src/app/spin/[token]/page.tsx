@@ -1,9 +1,10 @@
 import { cache } from "react";
 import type { Metadata, Viewport } from "next";
-import { notFound } from "next/navigation";
 import { headers } from "next/headers";
+import { linkAttemptsBlocked, linkNotFound } from "@/lib/fan/linkNotFound";
 import { clientIpFromHeaders } from "@/lib/api/clientIp";
 import { noteFanMiss } from "@/lib/api/fanMiss";
+import { publicGameCopy } from "@/lib/games/publicCopy";
 import { getCreatorThemeView, getFanAppInfo, getFanLinkStatus, getFanPass, getPausedFanWins } from "@/lib/data";
 import LinkGone from "@/components/fan/LinkGone";
 import PausedWins from "@/components/fan/PausedWins";
@@ -44,6 +45,9 @@ export async function generateMetadata({
   if (!info) return { robots, manifest: null };
   const paths = fanAppPaths(token);
   return {
+    // WA-07: the fan's tab reads as their game, not as creator marketing.
+    title: `${info.creatorTitle} · Play`,
+    description: "Your personal prize game. Every play lands on a prize.",
     robots,
     manifest: paths.manifest,
     icons: { apple: `${paths.icon("180")}?v=${iconVersion(info)}` },
@@ -74,11 +78,16 @@ export default async function SpinPage({
     if (paused) return <PausedWins token={token} view={paused} />;
     // A link whose creator left, or whose fan deleted their data, says so.
     // Anything else (switched off, blocked by a suspension, unknown) is the
-    // 404, which still offers the fan's data controls (./not-found.tsx).
+    // branded 404 (src/app/not-found.tsx, WA-02), which still offers the
+    // fan's data controls.
     const status = await getFanLinkStatus(token);
     if (!status) {
-      await noteFanMiss(await visitorIp());
-      notFound();
+      // ATK-04: the lookup above always runs, so a real link opens whatever
+      // its address did. WF-03: once the address is over its budget of
+      // misses, a miss gets the honest "too many attempts" page instead.
+      const { over, retryAfter } = await noteFanMiss(await visitorIp());
+      if (over) linkAttemptsBlocked(retryAfter);
+      linkNotFound("spin", token);
     }
     return <LinkGone status={status} />;
   }
@@ -99,12 +108,13 @@ export default async function SpinPage({
     >
       <ThemeBackdrop bgUrl={look.bgUrl} heavyGrain={plan.grains.length > 1} />
       <div className="relative z-40 w-full max-w-md"><NoScriptNote /></div>
-      <LinkPauseProvider initialBreakUntil={pass.play?.breakUntil ?? null}>
+      {/* RF-13: the server's clock, so countdowns ignore a phone that is minutes off. */}
+      <LinkPauseProvider initialBreakUntil={pass.play?.breakUntil ?? null} serverNow={new Date().toISOString()}>
         {/* z-40: the fan UI (and every fixed overlay inside it: reward reveal,
             saved-reward and break dialogs) paints above the backdrop and above
             the Preview-only EnvBadge (z-30), which must never cover a fan's
             action. Those overlays' own z-index only orders them inside here. */}
-        <div className="relative z-40 flex w-full justify-center">
+        <div className="relative z-[41] flex w-full justify-center">
           <SpinClient
             pass={pass}
             gallery={look.media.length ? <PhotoGallery media={look.media} creatorTitle={pass.creatorTitle} /> : null}
@@ -117,7 +127,8 @@ export default async function SpinPage({
           className="relative z-40 mt-10 flex flex-col items-center gap-2 rounded-2xl px-3 py-1.5 text-center text-[11px] tracking-wide text-muted"
           style={{ backgroundColor: "var(--theme-bg)" }}
         >
-          <span>Powered by FanFunnel · every spin lands on a prize</span>
+          {/* TS-10: the line names the game this fan plays (spin / ticket / play). */}
+          <span>{publicGameCopy(pass.wheel.gameKind).shareFooter}</span>
           <SafetyMenu token={token} />
           <LegalLinks />
         </footer>

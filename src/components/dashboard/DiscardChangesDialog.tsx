@@ -65,7 +65,7 @@ export default function DiscardChangesDialog({
             ref={keepRef}
             type="button"
             onClick={onKeep}
-            className="flex-1 rounded-[10px] border border-line py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+            className="flex-1 rounded-[10px] border border-line py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]"
           >
             {pending ? "Keep this page open" : "Keep editing"}
           </button>

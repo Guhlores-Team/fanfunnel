@@ -133,7 +133,7 @@ async function openFan(browser, config, state, fixture) {
   const context = await guardedContext(browser, config, state);
   const page = await context.newPage();
   await goto(page, config, `/spin/${encodeURIComponent(fixture.token)}`);
-  const gate = page.getByRole("dialog", { name: "Before you spin" });
+  const gate = page.getByRole("dialog", { name: "Before you play" });
   await gate.waitFor({ timeout: 15_000 });
   await gate.getByRole("checkbox", { name: "I am 18 or older, and an adult where I live." }).check();
   await gate.getByRole("checkbox", { name: /I agree to the Terms of Service/ }).check();

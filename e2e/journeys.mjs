@@ -393,8 +393,9 @@ export async function fanJourney(page, { step, assert }, ctx) {
 
   await step("fan page: leaderboard visible before spinning", async () => {
     await passAgeGate(page);
-    const body = await page.locator("body").innerText();
-    assert(/top spinners/i.test(body), "leaderboard section renders pre-spin");
+    // TS-14: nothing is rendered behind the gate, so the board loads once it is passed.
+    const shown = await page.waitForFunction(() => /top spinners/i.test(document.body.innerText), null, { timeout: 8000 }).then(() => true, () => false);
+    assert(shown, "leaderboard section renders pre-spin");
   });
 
   await step("fan page: the next-spin commitment sits below the wheel, uncut, at 360px", async () => {

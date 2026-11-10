@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type PointerEvent } from "react";
 import type { ScratchPresentation } from "@/lib/games/scratch/engine";
 import { addScratchCoverage, scratchPoint, SCRATCH_BRUSH_FRACTION, SCRATCH_REVEAL_FRACTION, type ScratchPoint } from "./scratchGeometry";
+import { lastOf } from "@/lib/fan/uuid";
 
 /** Cosmetic foil over the immutable server ticket. Gestures never select an outcome. */
 export default function ScratchTicket({ presentation, onReveal, reducedMotion = false }: {
@@ -18,13 +19,15 @@ export default function ScratchTicket({ presentation, onReveal, reducedMotion = 
   const strokes = useRef<ScratchPoint[][]>([]);
   const completed = useRef(false);
   const revealAll = useRef<HTMLButtonElement>(null);
-  // PLAY is disabled while the ticket arrives, which drops focus to <body>;
-  // the next Tab would then skip Reveal all (it sits above PLAY). Land the
-  // keyboard on Reveal all instead, unless focus already moved elsewhere.
+  // PLAY is switched off while the ticket arrives (aria-disabled, PA-04: it
+  // keeps focus rather than dropping it to <body>); the next Tab would then
+  // skip Reveal all (it sits above PLAY). Land the keyboard on Reveal all
+  // instead, unless focus already moved elsewhere.
   useEffect(() => {
     if (reducedMotion) return;
     const active = document.activeElement;
-    if (!active || active === document.body || (active instanceof HTMLButtonElement && active.disabled)) revealAll.current?.focus({ preventScroll: true });
+    const off = active instanceof HTMLButtonElement && (active.disabled || active.getAttribute("aria-disabled") === "true");
+    if (!active || active === document.body || off) revealAll.current?.focus({ preventScroll: true });
   }, [reducedMotion]);
   const reveal = useCallback(() => {
     if (completed.current) return;
@@ -86,9 +89,9 @@ export default function ScratchTicket({ presentation, onReveal, reducedMotion = 
     if (completed.current || activePointer.current !== event.pointerId) return;
     const point = scratchPoint(event.clientX, event.clientY, event.currentTarget.getBoundingClientRect());
     if (!point) return;
-    const stroke = strokes.current.at(-1);
+    const stroke = lastOf(strokes.current);
     if (!stroke) return;
-    const prior = stroke.at(-1) ?? point;
+    const prior = lastOf(stroke) ?? point;
     stroke.push(point);
     const fraction = addScratchCoverage(covered.current, prior, point);
     paint();
@@ -113,7 +116,7 @@ export default function ScratchTicket({ presentation, onReveal, reducedMotion = 
       <div className="relative overflow-hidden rounded-xl border border-line">
         <table aria-label="Committed scratch ticket symbols" aria-hidden={!revealed} className="w-full table-fixed border-collapse text-center" data-testid="scratch-face">
           <tbody>{[0,1,2].map(row => <tr key={row}>{presentation.cells.slice(row * 3, row * 3 + 3).map((cell, column) => (
-            <td key={`${row}-${column}`} className="h-28 border border-line bg-base px-1 py-3 align-middle" data-testid="scratch-cell" data-cell-kind={cell.kind} data-symbol-id={cell.id}>
+            <td key={`${row}-${column}`} className="h-28 border border-line bg-canvas px-1 py-3 align-middle" data-testid="scratch-cell" data-cell-kind={cell.kind} data-symbol-id={cell.id}>
               <span className="block text-2xl" aria-hidden="true">{cell.emoji ?? "◇"}</span>
               <span className="mt-2 block break-words text-xs font-semibold leading-snug text-ink [overflow-wrap:anywhere]">{cell.label}</span>
             </td>

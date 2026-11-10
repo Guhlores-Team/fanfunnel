@@ -26,7 +26,7 @@ export default function OpenInBrowser({ inApp }: { inApp: InAppBrowser }) {
           type="button"
           onClick={() => void copy()}
           data-testid="open-in-browser-copy"
-          className="btn-brand min-h-11 rounded-xl px-5 text-sm font-extrabold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+          className="btn-brand min-h-11 rounded-xl px-5 text-sm font-extrabold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
         >
           {copied === "copied" ? "Link copied" : "Copy link"}
         </button>

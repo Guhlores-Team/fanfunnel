@@ -108,8 +108,10 @@ const BRANDS = [...EXTREMES, ...RANDOM];
         if (c < MIN_TEXT_CONTRAST) assert.fail(`${bg}/${brand}: --brand-text ${s["--brand-text"]} is ${c.toFixed(2)}:1 on ${stop}`);
         passed++;
       }
-      // --brand-ink is still the better of the two inks on the brand fill.
-      check(`${bg}/${brand}: brand-ink unchanged`, s["--brand-ink"] === readableInk(s["--brand"]));
+      // --brand-ink is still the better of the two inks on the fill that is
+      // painted: --brand-ui (PA-01: the brand, lifted to 3:1 on a surface where
+      // it would not show as a button or a focus ring).
+      check(`${bg}/${brand}: brand-ink is the readable ink on the painted fill`, s["--brand-ink"] === readableInk(s["--brand-ui"]));
       // The peak really is the lightest colour (rounded up, never under).
       const peakL = luminance(hex(s["--theme-bg-peak"]));
       check(

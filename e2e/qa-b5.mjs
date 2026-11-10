@@ -112,7 +112,7 @@ export async function qaB5Journey(browser, { step, assert }, sink, ctx) {
       attachSink(page, sink);
       try {
         await goto(page, `/spin/${fan.token}`, 900);
-        const gate = page.getByRole("dialog", { name: "Before you spin" });
+        const gate = page.getByRole("dialog", { name: "Before you play" });
         await gate.waitFor({ timeout: 5000 });
         for (const box of await gate.getByRole("checkbox").all()) await box.check();
         await gate.getByRole("button", { name: /Enter/ }).click();

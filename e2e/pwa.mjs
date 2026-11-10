@@ -121,7 +121,8 @@ export async function pwaJourney(browser, { step, assert }, sink, ctx) {
     const html = await (await ctx.request.get(BASE + "/c/demo")).text();
     assert(!html.includes("/spin/"), "/c/demo has no /spin/ path");
     assert(!html.includes(token), "/c/demo does not contain the fan's token");
-    assert(/<link rel="manifest" href="\/manifest\.webmanifest"/.test(html), "/c/demo links only the site-wide manifest");
+    // WA-06: a public page offers no app manifest (the site-wide one installs the creator dashboard).
+    assert(!/<link rel="manifest"/.test(html), "/c/demo links no app manifest");
   });
 
   // --- the nudge, in fresh phone contexts (own storage) -------------------------
@@ -142,7 +143,8 @@ export async function pwaJourney(browser, { step, assert }, sink, ctx) {
       await spinAndCloseWin(p);
       const nudge = p.locator(NUDGE);
       await nudge.waitFor({ timeout: 5000 });
-      assert(/Add Spins to your home screen/.test(await nudge.innerText()), "uses the neutral app name");
+      // WF-14: where the app has no name of its own the nudge says "this page", never the bare neutral name.
+      assert(/Add this page to your home screen/.test(await nudge.innerText()), "names what is added without an app name the fan never saw");
       const install = nudge.getByRole("button", { name: "Install" });
       assert((await install.count()) === 1, "Android gets an Install button");
       await install.click();

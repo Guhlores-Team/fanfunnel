@@ -20,7 +20,7 @@ import {
 
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
 const secondaryBtn =
-  "inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[10px] border border-line px-4 text-sm font-semibold text-ink transition-colors hover:border-[var(--brand)]/60 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[10px] border border-line px-4 text-sm font-semibold text-ink transition-colors hover:border-[var(--brand-ui)]/60 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50";
 
 interface Device {
   id: string;
@@ -68,7 +68,7 @@ function Switch({
       </span>
       <span
         aria-hidden="true"
-        className={`relative h-[26px] w-[46px] shrink-0 rounded-full transition-colors ${on ? "bg-[var(--brand)]" : "bg-line"}`}
+        className={`relative h-[26px] w-[46px] shrink-0 rounded-full transition-colors ${on ? "bg-[var(--brand-ui)]" : "bg-line"}`}
       >
         <span
           className={`absolute top-[3px] h-5 w-5 rounded-full transition-transform ${

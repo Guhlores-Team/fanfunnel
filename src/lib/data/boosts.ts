@@ -32,7 +32,10 @@ import {
 } from "./mock";
 import { resolveFanByToken } from "./fans";
 import { withdrawFanLeaderboardConsent } from "./privacy";
-import { readPublicCreator } from "./publicCreatorRow";
+import { readFailed, readPublicCreator } from "./publicCreatorRow";
+import { mockGetPublicProfileFields } from "./mockPublicProfile";
+
+const DEMO_CREATOR_ID = "demo-creator";
 import { NEUTRAL_CREATOR_TITLE, publicCreatorTitle } from "@/lib/publicCreator";
 
 // ---------------------------------------------------------------------------
@@ -155,11 +158,13 @@ export async function getShareCard(
   if (!isSupabaseConfigured()) return mockGetShareCard(shareId);
 
   const sb = createServiceClient();
-  const { data } = await sb
+  const { data, error } = await sb
     .from("spins")
     .select("creator_id, prize_label, prize_rarity, prize_image_url, created_at, game_kind")
     .eq("share_id", shareId)
     .maybeSingle();
+  // OPS3-06: a failed read is an error page, not "not found".
+  if (readFailed(error)) throw new FanPassUnavailableError("spins read failed");
 
   const row = data as unknown as {
     creator_id: string;
@@ -187,11 +192,15 @@ export async function getShareCard(
 
 // --- Provably-fair verification (#23) ---------------------------------------
 
+// Postgres "undefined_column": the only read failure that means an older
+// schema rather than a database outage.
+
 /**
  * The fairness data for a single spin, keyed by its non-secret share_id. Reveals
  * the committed server seed + hash so a public verify page can recompute the
  * hash and confirm the commitment held. Service-role read (fans aren't authed).
- * Returns null when the spin isn't found or has no committed seed (older spins).
+ * Returns null when the spin isn't found or has no committed seed (older spins);
+ * throws (OPS3-06) when the read itself failed.
  */
 export async function getSpinVerification(
   shareId: string
@@ -216,7 +225,8 @@ export async function getSpinVerification(
   // Pre-0041 DB (no seed_commitment column yet): read the rest; the commitment
   // is then unknown, which the page states rather than claiming more.
   if (res.error && isMissingColumnError(res.error)) res = await sb.from("spins").select(SELECT).eq("share_id", shareId).maybeSingle();
-  if (res.error) throw new FanPassUnavailableError("spins read failed");
+  // OPS3-06: any other failure is the database, not a missing spin.
+  if (readFailed(res.error)) throw new FanPassUnavailableError("spins read failed");
 
   const row = res.data as {
     creator_id: string;
@@ -240,11 +250,11 @@ export async function getSpinVerification(
   } | null;
   // L5 / batch 6 N2: like the share card, a suspended, pending or rejected
   // creator's spins are not verifiable in public (the page then 404s).
-  if (!row || !(await readPublicCreator(sb, row.creator_id, { by: "id", strict: true }))) return null;
+  if (!row || !(await readPublicCreator(sb, row.creator_id, { by: "id" }))) return null;
   if(row.kind === "bonus") {
     if(!row.parent_spin_id || !Number.isInteger(row.bingo_line) || row.bingo_line!<0 || row.bingo_line!>7)return null;
     const {data:parent,error}=await sb.from("spins").select("share_id,kind").eq("id",row.parent_spin_id).maybeSingle();
-    if(error)throw new FanPassUnavailableError("spins read failed");
+    if(readFailed(error))throw new FanPassUnavailableError("spins read failed");
     if(!parent?.share_id||parent.kind!=="play")return null;
     return {prizeLabel:row.prize_label,rarity:row.prize_rarity,at:row.created_at,serverSeed:"",serverSeedHash:"",nonce:0,hashOk:false,
       parent:{shareId:parent.share_id,line:row.bingo_line!,prizeId:row.prize_id??null}};
@@ -280,9 +290,10 @@ export async function getSpinVerification(
 
 export async function addWishlist(
   token: string,
-  prizeLabel: string
+  prizeLabel: string,
+  prizeId: string | null = null
 ): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return mockAddWishlist(token, prizeLabel);
+  if (!isSupabaseConfigured()) return mockAddWishlist(token, prizeLabel, prizeId);
 
   const sb = createServiceClient();
   const resolved = await resolveFanByToken(sb, token);
@@ -290,15 +301,15 @@ export async function addWishlist(
   if (resolved.blocked) return { error: "blocked" };
   if (resolved.needsAck) return { error: "needs_ack" };
 
-  // The label must exist on the fan's resolved wheel; snapshot its rarity.
-  const { data: prize } = await sb
-    .from("prizes")
-    .select("id, rarity")
-    .eq("wheel_id", resolved.wheelId)
-    .eq("label", prizeLabel)
-    .maybeSingle();
-  const p = prize as { id: string; rarity: Rarity } | null;
-  if (!p) return { error: "invalid_prize" };
+  // The prize must exist on the fan's resolved wheel; snapshot its rarity.
+  // RF-15: by id when the page sent one (two prizes may share a label), the
+  // label is then checked against that row; by label for older pages.
+  let query = sb.from("prizes").select("id, label, rarity").eq("wheel_id", resolved.wheelId);
+  query = prizeId ? query.eq("id", prizeId) : query.eq("label", prizeLabel);
+  // limit(1): two prizes that share a label must not make the single-row read fail.
+  const { data: prizeRow } = await query.limit(1).maybeSingle();
+  const p = prizeRow as { id: string; label: string; rarity: Rarity } | null;
+  if (!p || (prizeId && p.label !== prizeLabel)) return { error: "invalid_prize" };
 
   const { error } = await sb
     .from("wishlists")
@@ -317,7 +328,8 @@ export async function addWishlist(
 
 export async function removeWishlist(
   token: string,
-  prizeLabel: string
+  prizeLabel: string,
+  _prizeId: string | null = null
 ): Promise<{ ok: true } | { error: string }> {
   if (!isSupabaseConfigured()) return mockRemoveWishlist(token, prizeLabel);
 
@@ -431,7 +443,12 @@ export async function setFanLeaderboardOptIn(
 export async function getLeaderboard(
   creatorIdOrSlug: string
 ): Promise<LeaderboardView | null> {
-  if (!isSupabaseConfigured()) return mockGetLeaderboard(creatorIdOrSlug);
+  if (!isSupabaseConfigured()) {
+    // WA-02 parity: the demo has one creator, known by its id, its saved
+    // link name and the historical "demo"; anything else has no board.
+    const known = creatorIdOrSlug === DEMO_CREATOR_ID || creatorIdOrSlug === "demo" || creatorIdOrSlug === mockGetPublicProfileFields().slug;
+    return known ? mockGetLeaderboard(creatorIdOrSlug) : null;
+  }
   const cutoff = new Date().toISOString();
 
   // OPS3-02/06: bounded reads; a fault throws (the page's error boundary),
@@ -442,7 +459,6 @@ export async function getLeaderboard(
   const prof = await readPublicCreator<{ leaderboard_enabled: boolean }>(sb, creatorIdOrSlug, {
     by: "either",
     extra: "leaderboard_enabled",
-    strict: true,
   });
   if (!prof) return null;
   if (!prof.leaderboard_enabled) {

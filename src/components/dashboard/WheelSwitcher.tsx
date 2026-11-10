@@ -455,14 +455,14 @@ export default function WheelSwitcher({
                 ref={takeoverKeepRef}
                 type="button"
                 onClick={() => setTakeover(null)}
-                className="flex-1 rounded-[10px] border border-line px-3 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                className="flex-1 rounded-[10px] border border-line px-3 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]"
               >
                 Don&rsquo;t schedule
               </button>
               <button
                 type="button"
                 onClick={() => void confirmTakeover()}
-                className="btn-brand flex-1 rounded-[10px] px-3 py-2.5 text-sm font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                className="btn-brand flex-1 rounded-[10px] px-3 py-2.5 text-sm font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]"
               >
                 Yes, schedule it
               </button>
@@ -475,7 +475,7 @@ export default function WheelSwitcher({
           data-testid="live-game"
           data-live-game-id={live.game.id}
           aria-live="polite"
-          className="mb-3 rounded-xl border border-[color-mix(in_oklab,var(--brand)_35%,var(--hair))] bg-[color-mix(in_oklab,var(--brand)_8%,transparent)] px-3.5 py-2.5 text-[13px] text-muted"
+          className="mb-3 rounded-xl border border-[color-mix(in_oklab,var(--brand-ui)_35%,var(--hair))] bg-[color-mix(in_oklab,var(--brand-ui)_8%,transparent)] px-3.5 py-2.5 text-[13px] text-muted"
         >
           <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
             <span className="font-semibold text-ink">Live for fans now:</span>
@@ -511,8 +511,8 @@ export default function WheelSwitcher({
                   key={w.id}
                   className={`relative inline-flex min-h-[34px] min-w-0 max-w-full items-center rounded-full border pl-3.5 pr-1 text-[13px] font-semibold transition-colors duration-150 ${
                     current
-                      ? "border-[color-mix(in_oklab,var(--brand)_45%,transparent)] bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] text-ink"
-                      : "border-[var(--hair)] text-muted hover:border-[color-mix(in_oklab,var(--brand)_35%,var(--hair))] hover:text-ink"
+                      ? "border-[color-mix(in_oklab,var(--brand-ui)_45%,transparent)] bg-[color-mix(in_oklab,var(--brand-ui)_14%,transparent)] text-ink"
+                      : "border-[var(--hair)] text-muted hover:border-[color-mix(in_oklab,var(--brand-ui)_35%,var(--hair))] hover:text-ink"
                   }`}
                 >
                   <button
@@ -521,7 +521,7 @@ export default function WheelSwitcher({
                     disabled={busy}
                     aria-current={current ? "true" : undefined}
                     title={hint}
-                    className="flex min-h-[32px] min-w-0 max-w-[300px] shrink items-center gap-2 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                    className="flex min-h-[32px] min-w-0 max-w-[300px] shrink items-center gap-2 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]"
                   >
                     <span
                       aria-hidden="true"
@@ -531,13 +531,13 @@ export default function WheelSwitcher({
                     <span className="min-w-0 truncate">{w.title}</span>
                     <KindBadge kind={w.gameKind} />
                     {live?.game.id === w.id && (
-                      <span className="shrink-0 rounded-full border border-[color-mix(in_oklab,var(--brand)_45%,transparent)] px-1.5 py-px text-[9.5px] font-bold uppercase tracking-wide text-ink">
+                      <span className="shrink-0 rounded-full border border-[color-mix(in_oklab,var(--brand-ui)_45%,transparent)] px-1.5 py-px text-[9.5px] font-bold uppercase tracking-wide text-ink">
                         Live
                       </span>
                     )}
                     {w.gameReady === false && <span className="shrink-0 rounded-full border border-amber-300/30 px-1.5 py-px text-[9.5px] font-semibold">Draft</span>}
                     {w.isActive && (
-                      <span className="shrink-0 rounded-full bg-[var(--brand)] px-1.5 py-px text-[9.5px] font-bold uppercase tracking-wide text-[var(--brand-ink)]">
+                      <span className="shrink-0 rounded-full bg-[var(--brand-ui)] px-1.5 py-px text-[9.5px] font-bold uppercase tracking-wide text-[var(--brand-ink)]">
                         Active
                       </span>
                     )}
@@ -557,7 +557,7 @@ export default function WheelSwitcher({
                       title={w.prizeCount < MIN_WHEEL_PRIZES ? `Save at least ${MIN_WHEEL_PRIZES} prizes before activating this game.` : !canCreateGame(w.gameKind ?? "wheel", features) ? "Ask your admin to enable this game type before activating it." : undefined}
                       aria-label={`Set ${w.title} active`}
                       aria-expanded={confirmActivate === w.id}
-                      className="ml-1 inline-flex min-h-11 shrink-0 items-center rounded-full border border-[color-mix(in_oklab,var(--brand)_45%,transparent)] px-3 text-[11px] font-bold uppercase tracking-wide text-brand transition-colors hover:bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-50"
+                      className="ml-1 inline-flex min-h-11 shrink-0 items-center rounded-full border border-[color-mix(in_oklab,var(--brand-ui)_45%,transparent)] px-3 text-[11px] font-bold uppercase tracking-wide text-brand transition-colors hover:bg-[color-mix(in_oklab,var(--brand-ui)_14%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)] disabled:opacity-50"
                     >
                       Set active
                     </button>
@@ -578,7 +578,7 @@ export default function WheelSwitcher({
                     aria-expanded={open}
                     aria-label={`Manage ${w.title}`}
                     title="Manage game"
-                    className="ml-1 grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted max-sm:h-10 max-sm:w-10 transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                    className="ml-1 grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted max-sm:h-10 max-sm:w-10 transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]"
                   >
                     <Icon d="M5 12h.01M12 12h.01M19 12h.01" size={15} />
                   </button>
@@ -714,7 +714,7 @@ export default function WheelSwitcher({
           type="button"
           onClick={() => { setNewError(""); setNewOpen(true); }}
           disabled={busy}
-          className="inline-flex min-h-[34px] items-center gap-1.5 rounded-full border border-dashed border-[var(--hair)] px-3.5 text-[13px] font-semibold text-muted transition-colors duration-150 hover:border-[color-mix(in_oklab,var(--brand)_45%,var(--hair))] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-50"
+          className="inline-flex min-h-[34px] items-center gap-1.5 rounded-full border border-dashed border-[var(--hair)] px-3.5 text-[13px] font-semibold text-muted transition-colors duration-150 hover:border-[color-mix(in_oklab,var(--brand-ui)_45%,var(--hair))] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)] disabled:opacity-50"
         >
           <Icon d="M12 5v14M5 12h14" size={14} strokeWidth={2.2} />
           New game
@@ -747,7 +747,7 @@ export default function WheelSwitcher({
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="flex min-w-0 items-center gap-2 text-sm font-bold text-ink">
-              <span aria-hidden="true" className="h-3.5 w-[3px] shrink-0 rounded-sm bg-[var(--brand)]" />
+              <span aria-hidden="true" className="h-3.5 w-[3px] shrink-0 rounded-sm bg-[var(--brand-ui)]" />
               Schedule
               <span className="min-w-0 truncate text-xs font-medium text-muted">{selected.title}</span>
             </h2>
@@ -823,7 +823,7 @@ export default function WheelSwitcher({
               <button
                 type="button"
                 onClick={onOpenCampaigns}
-                className="mt-2 inline-flex min-h-9 items-center rounded-[9px] border border-[var(--hair)] px-3 text-xs font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                className="mt-2 inline-flex min-h-9 items-center rounded-[9px] border border-[var(--hair)] px-3 text-xs font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]"
               >
                 Choose games for campaigns
               </button>

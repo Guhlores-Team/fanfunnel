@@ -78,10 +78,18 @@ export async function attackB6Journey(page, { step, assert }, ctx) {
       }
       const view = await request.get(`${BASE}/verify/${a.shareId}`);
       assert(view.status() === 200 && !(await view.text()).includes(a.claimCode), "the public verify page never shows the code");
-      const match = await (await request.get(`${BASE}/verify/${a.shareId}?code=${a.claimCode.toLowerCase()}`)).text();
-      assert(match.includes('data-state="match"'), "the creator's check accepts the right code");
-      const miss = await (await request.get(`${BASE}/verify/${a.shareId}?code=${b.claimCode}`)).text();
-      assert(miss.includes('data-state="mismatch"'), "…and refuses the other win's code");
+      // WF-17: the check is a POST (the code never enters a URL); the no-JS
+      // form post redirects back carrying only the verdict.
+      const match = await (await request.post(`${BASE}/api/public/claim-check`, { data: { shareId: a.shareId, code: a.claimCode.toLowerCase() } })).json();
+      assert(match.state === "match", "the creator's check accepts the right code");
+      const miss = await (await request.post(`${BASE}/api/public/claim-check`, { data: { shareId: a.shareId, code: b.claimCode } })).json();
+      assert(miss.state === "mismatch", "…and refuses the other win's code");
+      const posted = await request.post(`${BASE}/api/public/claim-check`, { form: { shareId: a.shareId, code: b.claimCode }, maxRedirects: 0 });
+      const location = posted.headers().location ?? "";
+      assert(posted.status() === 303 && location.endsWith(`/verify/${a.shareId}?claimed=mismatch`), `a plain form post comes back with the verdict only (${posted.status()} ${location})`);
+      const shown = await (await request.get(new URL(location, BASE).toString())).text();
+      assert(shown.includes('data-state="mismatch"') && !shown.includes(b.claimCode), "the page shows the verdict and never the code");
+      assert(!(await (await request.get(`${BASE}/verify/${a.shareId}?code=${a.claimCode}`)).text()).includes('data-state="match"'), "a code in the URL is ignored");
     });
   } finally {
     for (const id of fans) await request.delete(`${BASE}/api/fans/${id}`).catch(() => {});

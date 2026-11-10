@@ -100,7 +100,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                   t.action?.onClick();
                   dismiss(t.id);
                 }}
-                className="min-h-9 shrink-0 rounded-md border border-line px-2.5 text-xs font-semibold text-ink transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                className="min-h-9 shrink-0 rounded-md border border-line px-2.5 text-xs font-semibold text-ink transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]"
               >
                 {t.action.label}
               </button>
@@ -109,7 +109,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               type="button"
               onClick={() => dismiss(t.id)}
               aria-label="Dismiss"
-              className="grid h-9 w-9 shrink-0 place-items-center rounded-md text-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-md text-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]"
             >
               <span aria-hidden="true">×</span>
             </button>

@@ -19,7 +19,7 @@ export default function GlobalError({
   useReportBoundaryError(error);
   return (
     <html lang="en">
-      <body className="min-h-[100dvh] flex flex-col bg-base text-ink antialiased">
+      <body className="min-h-[100dvh] flex flex-col bg-canvas text-ink antialiased">
         <main
           className="grain brand-glow relative flex min-h-[100dvh] flex-col items-center justify-center px-5 py-10"
           style={brandVars(DEFAULT_BRAND)}

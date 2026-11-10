@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { useLinkPause } from "./LinkPauseProvider";
 import { PAUSED_CONFIRMATION, PAUSE_WARNING, pauseErrorMessage } from "./linkPause";
@@ -26,6 +27,8 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
   const [reason, setReason] = useState("");
   const [detail, setDetail] = useState("");
   const [done, setDone] = useState<string | null>(null);
+  // RF-05: a failed report stays on the form (the typed detail is kept).
+  const [reportError, setReportError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const { markPaused } = useLinkPause();
   // Inline failure on the pause confirm step so the fan can retry in place.
@@ -63,13 +66,17 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
   const report = async () => {
     if (!reason.trim()) return;
     setBusy(true);
+    setReportError(null);
     try {
       const res = await fetch("/api/report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, reason, detail }),
       });
-      setDone(res.ok ? "Thanks — your report was sent to FanFunnel." : "Couldn't send. Try again.");
+      if (res.ok) setDone("Thanks — your report was sent to FanFunnel.");
+      else setReportError(res.status === 429 ? "Too many reports from your network right now. Try again in a minute." : "Couldn't send. Try again.");
+    } catch {
+      setReportError("Couldn't send — check your connection and try again.");
     } finally {
       setBusy(false);
     }
@@ -100,10 +107,18 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
     }
   };
 
+  // The sheet is rendered into the page's <main>: there it keeps the creator's
+  // brand variables and paints above the game (the footer this button lives
+  // in sits below the game's layer so the age gate can cover it).
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [host, setHost] = useState<Element | null>(null);
+
   return (
     <>
       <button
+        ref={triggerRef}
         onClick={() => {
+          setHost(triggerRef.current?.closest("main") ?? document.body);
           setOpen(true);
           setMode(null);
           setDone(null);
@@ -111,14 +126,14 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
           setExportNote(null);
           setInlineData(null);
         }}
-        className="text-[11px] text-muted underline-offset-4 transition hover:text-muted hover:underline"
+        className="inline-flex min-h-11 items-center px-2 text-xs text-muted underline-offset-4 transition hover:text-muted hover:underline"
       >
         Safety &amp; privacy
       </button>
 
-      {open && (
+      {open && host && createPortal(
         <div
-          className="fixed inset-0 z-50 flex overflow-y-auto overscroll-contain bg-black/70 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-[65] flex overflow-y-auto overscroll-contain bg-black/70 p-4 text-left backdrop-blur-sm"
           onClick={close}
         >
           <div
@@ -146,7 +161,7 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
                 <p className="text-sm font-bold text-ink">Safety &amp; privacy</p>
                 <button
                   onClick={() => setMode("report")}
-                  className="mt-4 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[var(--brand)]"
+                  className="mt-4 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[var(--brand-ui)]"
                 >
                   🚩 Report this creator
                   <span className="mt-0.5 block text-xs text-muted">
@@ -156,7 +171,7 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
                 {!paused && (
                   <button
                     onClick={() => setMode("exclude")}
-                    className="mt-2 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[var(--brand)]"
+                    className="mt-2 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[var(--brand-ui)]"
                   >
                     ⏸️ Pause my link
                     <span className="mt-0.5 block text-xs text-muted">
@@ -167,7 +182,7 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
                 <button
                   onClick={exportOrShow}
                   disabled={busy}
-                  className="mt-2 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[var(--brand)] disabled:opacity-50"
+                  className="mt-2 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[var(--brand-ui)] disabled:opacity-50"
                 >
                   ⬇️ {busy ? "Preparing your data…" : "Download my data"}
                   <span className="mt-0.5 block text-xs text-muted">
@@ -194,7 +209,7 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
                 >
                   Cancel
                 </button>
-                <LegalLinks className="mt-3" />
+                <LegalLinks className="mt-3" landmark={false} />
               </>
             ) : mode === "delete" ? (
               <FanDeleteFlow
@@ -228,6 +243,11 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
                   value={detail}
                   onChange={(e) => setDetail(e.target.value)}
                 />
+                {reportError && (
+                  <p role="alert" data-testid="report-error" className="mt-3 text-center text-xs text-amber-300">
+                    {reportError}
+                  </p>
+                )}
                 <button
                   onClick={report}
                   disabled={busy || !reason}
@@ -263,7 +283,8 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
               </>
             )}
           </div>
-        </div>
+        </div>,
+        host,
       )}
     </>
   );

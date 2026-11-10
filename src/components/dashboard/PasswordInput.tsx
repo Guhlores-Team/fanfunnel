@@ -51,7 +51,7 @@ export default function PasswordInput({
           e.preventDefault();
           setShown((v) => !v);
         }}
-        className="absolute inset-y-0 right-0 my-auto inline-flex min-h-9 items-center px-3 text-xs font-semibold text-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] max-sm:min-h-11"
+        className="absolute inset-y-0 right-0 my-auto inline-flex min-h-9 items-center px-3 text-xs font-semibold text-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)] max-sm:min-h-11"
       >
         {shown ? "Hide" : "Show"}
       </button>

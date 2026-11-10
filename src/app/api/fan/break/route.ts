@@ -12,7 +12,8 @@ import { breakDurationMs } from "@/lib/play/playGuard";
 export async function POST(req: Request) {
   return withFanToken<{ token?: unknown; duration?: unknown }>(
     req,
-    { scope: "fan-break", limit: PLAY_ROUTE_LIMIT, windowMs: PLAY_ROUTE_WINDOW_MS },
+    // ATK-01 (fanOnly): a break is the fan's choice; the creator has their own controls.
+    { scope: "fan-break", limit: PLAY_ROUTE_LIMIT, windowMs: PLAY_ROUTE_WINDOW_MS, fanOnly: true },
     async (token, body) => {
       const ms = breakDurationMs(body.duration);
       if (ms === null) return badRequest();

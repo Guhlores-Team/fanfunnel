@@ -13,7 +13,8 @@ import { REWARD_VIEW_LIMIT, REWARD_VIEW_WINDOW_MS } from "@/lib/rewards/config";
 export async function POST(req: Request) {
   return withFanToken<{ token?: unknown; shareId?: unknown }>(
     req,
-    { scope: "fan-reward", limit: REWARD_VIEW_LIMIT, windowMs: REWARD_VIEW_WINDOW_MS },
+    // ATK-01 (fanOnly): a reward view is logged as the fan's; the creator reads it in Fulfilment.
+    { scope: "fan-reward", limit: REWARD_VIEW_LIMIT, windowMs: REWARD_VIEW_WINDOW_MS, fanOnly: true },
     async (token, body) => {
       if (!isShareIdShape(body.shareId)) return badRequest();
       const result = await getFanReward(token, body.shareId);

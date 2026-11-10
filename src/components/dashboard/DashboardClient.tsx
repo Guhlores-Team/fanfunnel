@@ -477,7 +477,7 @@ export default function DashboardClient({
       <a
         href="#dash-content"
         data-testid="skip-to-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-lg focus:bg-[var(--brand)] focus:px-4 focus:py-2.5 focus:text-sm focus:font-bold focus:text-[var(--brand-ink)]"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-lg focus:bg-[var(--brand-ui)] focus:px-4 focus:py-2.5 focus:text-sm focus:font-bold focus:text-[var(--brand-ink)]"
       >
         Skip to content
       </a>
@@ -505,7 +505,7 @@ export default function DashboardClient({
           mobileLead={
             <span
               aria-hidden="true"
-              className="grid h-10 w-10 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-sm font-bold text-ink"
+              className="grid h-10 w-10 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand-ui)_18%,transparent)] text-sm font-bold text-ink"
             >
               {accountInitials(accountName)}
             </span>

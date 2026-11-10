@@ -44,7 +44,7 @@ export default function ThemedProfilePreview({
         <div className="w-full min-w-0 max-w-xs text-center">
           {avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element -- matches the public avatar
-            <img src={avatarUrl} alt="" className="mx-auto mb-5 h-20 w-20 rounded-full object-cover ring-2 ring-[var(--brand)]" />
+            <img src={avatarUrl} alt="" className="mx-auto mb-5 h-20 w-20 rounded-full object-cover ring-2 ring-[var(--brand-ui)]" />
           ) : (
             <div aria-hidden="true" className="mx-auto mb-5 grid h-20 w-20 place-items-center rounded-full bg-surface text-4xl">{copy.emoji}</div>
           )}

@@ -1,5 +1,7 @@
 // Data layer — inbox: DM templates, fan <-> creator chat threads and the
 // auto intro / outro messages.
+import { LINK_LIVE, fanLinkLive } from "./fanLinkLive";
+import { CREATOR_STANDING, creatorCanHostPlay, type CreatorStanding } from "./creatorPlayable";
 import { actorNames } from "./actorNames";
 import { demoActingCreator, resolveActingCreator } from "./seatScope";
 import { isActiveAdmin } from "@/lib/auth/adminCheck";
@@ -158,12 +160,15 @@ export async function sendFanMessage(
   const sb = createServiceClient();
   const { data: passData } = await sb
     .from("fan_passes")
-    .select("creator_id, fan:fans(id, spins_remaining, spins_granted_total, blocked_at, acked_at, acked_terms_version)")
+    .select(`creator_id, ${LINK_LIVE}, fan:fans(id, spins_remaining, spins_granted_total, blocked_at, acked_at, acked_terms_version), ${CREATOR_STANDING}`)
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
   const pass = passData as unknown as {
     creator_id: string;
+    is_active?: boolean | null;
+    expires_at?: string | null;
+    creator?: CreatorStanding;
     fan: {
       id: string;
       spins_remaining: number;
@@ -173,7 +178,11 @@ export async function sendFanMessage(
       acked_terms_version?: string | null;
     } | null;
   } | null;
-  if (!pass || !pass.fan) return { error: "not_found" };
+  // PR-13: an expired link answers like a switched-off one.
+  if (!pass || !pass.fan || !fanLinkLive(pass)) return { error: "not_found" };
+  // A suspended creator's link is not active (the fan page's answer): nothing
+  // is stored and no push reaches their devices.
+  if (!creatorCanHostPlay(pass.creator)) return { error: "not_found" };
   // A4: a fan the creator blocked can no longer message them.
   if (pass.fan.blocked_at) return { error: "blocked" };
   // T2: chat is behind the same age/terms gate as the spin.
@@ -211,12 +220,13 @@ export async function getFanMessages(token: string): Promise<ChatMessage[] | { e
   const sb = createServiceClient();
   const { data: passData } = await sb
     .from("fan_passes")
-    .select("creator_id, fan_id, fan:fans(blocked_at, acked_at, acked_terms_version)")
+    .select(`creator_id, fan_id, ${LINK_LIVE}, fan:fans(blocked_at, acked_at, acked_terms_version)`)
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
-  const pass = passData as unknown as { creator_id: string; fan_id: string; fan?: { blocked_at: string | null; acked_at?: string | null; acked_terms_version?: string | null } | null } | null;
-  if (!pass) return [];
+  const pass = passData as unknown as { creator_id: string; fan_id: string; is_active?: boolean | null; expires_at?: string | null; fan?: { blocked_at: string | null; acked_at?: string | null; acked_terms_version?: string | null } | null } | null;
+  // PR-13: an expired link reads like a switched-off one (an empty thread).
+  if (!pass || !fanLinkLive(pass)) return [];
   if (pass.fan?.blocked_at) return { error: "blocked" };
   // T2: nothing is read (or marked read) before the age/terms gate.
   if (fanNeedsAck(pass.fan?.acked_at, pass.fan?.acked_terms_version)) return { error: "needs_ack" };

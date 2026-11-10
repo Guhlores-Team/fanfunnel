@@ -1,5 +1,19 @@
+"use client";
+
+import { useSyncExternalStore } from "react";
 import type { WonPrize } from "@/lib/data/types";
-import { deliveryLabel, winDate, type WinDeliveryStatus } from "@/lib/fan/delivery";
+import { deliveryLabel, winDate, winDateLocal, type WinDeliveryStatus } from "@/lib/fan/delivery";
+
+const noSubscribe = () => () => {};
+/**
+ * RF-10: the win's calendar day where the fan is. The server (and the
+ * hydration render) print the UTC day, then the local day replaces it, so a
+ * win at 23:30 local no longer reads as tomorrow.
+ */
+export function LocalWinDate({ iso }: { iso: string }) {
+  const hydrated = useSyncExternalStore(noSubscribe, () => true, () => false);
+  return <>{hydrated ? winDateLocal(iso) : winDate(iso)}</>;
+}
 
 const TONE: Record<WinDeliveryStatus, string> = {
   waiting: "border-line text-muted",
@@ -20,7 +34,7 @@ export default function WinDeliveryList({ history, open = false }: { history: Wo
   const waiting = rows.filter((w) => w.delivery!.status === "waiting" || w.delivery!.status === "in_progress").length;
   return (
     <details className="mt-3 w-full rounded-2xl border border-line bg-surface/40 px-3 text-sm" open={open} data-testid="win-delivery">
-      <summary className="min-h-11 cursor-pointer py-3 font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]">
+      <summary className="min-h-11 cursor-pointer py-3 font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]">
         Prize delivery{waiting > 0 ? ` · ${waiting} not delivered yet` : ""}
       </summary>
       <ul className="space-y-2 pb-3">
@@ -28,7 +42,7 @@ export default function WinDeliveryList({ history, open = false }: { history: Wo
           <li key={w.shareId ?? `${w.label}-${w.at}-${i}`} className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <span className="min-w-0 break-words text-ink">
               {w.label}
-              <span className="block text-xs text-muted">Won {winDate(w.at)}</span>
+              <span className="block text-xs text-muted">Won <LocalWinDate iso={w.at} /></span>
             </span>
             <span data-testid="win-delivery-status" data-status={w.delivery!.status} className={`shrink-0 rounded-full border px-2 py-0.5 text-xs ${TONE[w.delivery!.status]}`}>
               {deliveryLabel(w.delivery!)}
