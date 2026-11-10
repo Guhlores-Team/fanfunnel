@@ -5,6 +5,8 @@ import Link from "next/link";
 import { AGENCY_INVITE_TTL_DAYS } from "@/lib/agency/config";
 import { formatCents } from "@/lib/format";
 import SeatWorkspace from "./SeatWorkspace";
+import LoadFailed from "@/components/dashboard/LoadFailed";
+import { loadJson } from "@/lib/hooks/loadJson";
 import LeaveAgency, { LeftAgency, leaveKind, type LeaveKind } from "./LeaveAgency";
 
 interface CreatorStat {
@@ -15,7 +17,8 @@ interface CreatorStat {
   fans: number;
   spins: number;
   pending: number;
-  revenue: number;
+  /** cents; null when masked for this seat (WG-19). */
+  revenue: number | null;
 }
 interface Member {
   id: string;
@@ -31,6 +34,15 @@ interface Invite {
   role?: string | null;
   id: string;
   email: string;
+  expiresAt?: string | null;
+  /** WG-06: ran out; listed for a while with Resend. */
+  expired?: boolean;
+}
+interface Tie {
+  orgId: string;
+  orgName: string;
+  kind: "owner" | "staff" | "creator";
+  role: string | null;
 }
 interface Overview {
   org: { id: string; name: string } | null;
@@ -41,7 +53,10 @@ interface Overview {
   /** With `managed`: that agency's id, so the creator can leave it. */
   orgId?: string | null;
   isOwner: boolean;
-  totals: { creators: number; fans: number; spins: number; pending: number; revenue: number };
+  viewerId?: string;
+  ownerActive?: boolean | null;
+  ties?: Tie[];
+  totals: { creators: number; fans: number; spins: number; pending: number; revenue: number | null };
   creators: CreatorStat[];
   members: Member[];
   invites: Invite[];
@@ -49,15 +64,20 @@ interface Overview {
 
 const ROLES = ["manager", "chatter", "fulfiller", "analyst"] as const;
 
-async function manage(body: Record<string, unknown>): Promise<string | null> {
-  const res = await fetch("/api/agency/manage", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (res.ok) return null;
+async function manage(body: Record<string, unknown>): Promise<{ error: string } | { invite?: string }> {
+  let res: Response;
+  try {
+    res = await fetch("/api/agency/manage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { error: "network" };
+  }
   const d = await res.json().catch(() => ({}));
-  return d.error ?? "error";
+  if (res.ok) return { invite: typeof d.invite === "string" ? d.invite : undefined };
+  return { error: typeof d.error === "string" ? d.error : "error" };
 }
 
 // Map each known status the agency RPC can return to a specific, actionable
@@ -70,14 +90,23 @@ const errLabel = (e: string) =>
     already_in_org: "That creator is already in another agency.",
     expired: "That invitation has expired. Send a new invitation.",
     not_owner: "Only the agency owner can do that.",
+    owner_seat: "That is the owner's own seat. It stays for as long as the agency exists.",
     not_found: "That item no longer exists — refresh and try again.",
     invalid_role: "Pick a valid staff role.",
     db_error: "Something went wrong on our end — please try again.",
     demo_only: "Demo only: agencies need a connected database, so nothing was saved.",
+    network: "Couldn't reach the server. Check your connection and try again.",
+    inactive: "That account is suspended, so it can't hold a seat right now.",
   })[e] ?? "Couldn't complete that — please try again.";
 
+// WG-06: the line names what happened to the invitation, never whether the
+// address has an account (B2 / ATK-06).
 const INVITE_SENT =
-  "Invitation saved. If that address already has a FanFunnel account, they'll get an e-mail; otherwise they'll see it when they sign up with that address.";
+  "Invitation saved. If that address has an approved FanFunnel account, they'll get an e-mail; otherwise they'll see it when they sign up and are approved with that address.";
+const INVITE_ALREADY_PENDING =
+  "An invitation for that address is already waiting, so nothing new was sent. Use Resend to e-mail it again.";
+const INVITE_RESENT =
+  "Invitation re-sent. If that address has an approved FanFunnel account, they'll get a fresh e-mail (at most 3 a day per address).";
 
 export default function AgencyClient() {
   const [data, setData] = useState<Overview | null>(null);
@@ -92,28 +121,37 @@ export default function AgencyClient() {
   // C10: removing a creator or a seat asks first ("creator:<id>" / "member:<id>").
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
 
+  // RD-02: a failed read is shown as a failed read with Retry, never as
+  // "Start your agency" to an owner or staff member.
+  const [loadError, setLoadError] = useState<unknown>(null);
+  // WG-03: which of the viewer's agencies the console shows.
+  const [orgChoice, setOrgChoice] = useState<string | null>(null);
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch("/api/agency", { cache: "no-store" });
-      if (res.ok) setData(await res.json());
+      setData(await loadJson<Overview>(orgChoice ? `/api/agency?org=${encodeURIComponent(orgChoice)}` : "/api/agency"));
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(e);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [orgChoice]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; state changes only after the response arrives
     void refresh();
   }, [refresh]);
 
   const run = async (body: Record<string, unknown>) => {
     setMsg(null);
     setSent(null);
-    const err = await manage(body);
-    if (err) {
-      setMsg(errLabel(err));
+    const outcome = await manage(body);
+    if ("error" in outcome) {
+      setMsg(errLabel(outcome.error));
       return false;
     }
-    if (body.action === "add_creator" || body.action === "add_member") setSent(INVITE_SENT);
+    if (body.action === "add_creator" || body.action === "add_member") setSent(outcome.invite === "pending" ? INVITE_ALREADY_PENDING : INVITE_SENT);
+    if (body.action === "resend_invite") setSent(INVITE_RESENT);
     await refresh();
     return true;
   };
@@ -138,6 +176,14 @@ export default function AgencyClient() {
 
   if (left) return <LeftAgency kind={left} />;
 
+  if (!data && loadError != null) {
+    return (
+      <div className="mx-auto max-w-xl px-5 py-10">
+        <LoadFailed error={loadError} what="your agency" onRetry={refresh} testId="agency-load-failed" />
+      </div>
+    );
+  }
+
   // Never the owner, the demo or a non-member (leaveKind).
   const canLeave = leaveKind(data);
 
@@ -152,13 +198,18 @@ export default function AgencyClient() {
 
   const { org, isOwner } = data;
   const t = data.totals;
+  // TS-16 / WG-19: "Tips recorded", and hidden when masked for this seat.
   const tiles = [
     { label: "Creators", value: String(t.creators) },
     { label: "Fans", value: String(t.fans) },
     { label: "Spins", value: String(t.spins) },
     { label: "Pending", value: String(t.pending) },
-    { label: "Revenue", value: formatCents(t.revenue) },
+    ...(t.revenue === null ? [] : [{ label: "Tips recorded", value: formatCents(t.revenue) }]),
   ];
+  const ties = data.ties ?? [];
+  const consoles = ties.filter((tie) => tie.kind !== "creator");
+  const ownerSeat = isOwner && data.viewerId ? data.members.find((m) => m.profileId === data.viewerId) ?? null : null;
+  const staff = data.members.filter((m) => !(ownerSeat && m.id === ownerSeat.id));
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-8 text-ink">
@@ -176,6 +227,28 @@ export default function AgencyClient() {
           ← My dashboard
         </Link>
       </header>
+
+      {consoles.length > 1 && (
+        <label className="mt-4 block text-sm">
+          <span className="text-muted">Agency</span>
+          <select
+            data-testid="agency-picker"
+            value={org.id}
+            onChange={(e) => { setLoading(true); setOrgChoice(e.target.value); }}
+            className="ff-input mt-1 w-auto"
+          >
+            {consoles.map((tie) => (
+              <option key={tie.orgId} value={tie.orgId}>{tie.orgName}{tie.kind === "owner" ? " (yours)" : ` (${tie.role ?? "staff"} seat)`}</option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {data.ownerActive === false && (
+        <p role="alert" data-testid="agency-owner-suspended" className="mt-4 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm text-amber-200 text-pretty">
+          This agency&apos;s owner account is suspended, so every seat here is paused: inboxes, prize queues and campaigns can&apos;t be opened until FanFunnel reactivates the owner. Creators the agency manages keep their own dashboards.
+        </p>
+      )}
 
       <SeatWorkspace />
 
@@ -211,28 +284,11 @@ export default function AgencyClient() {
         )}
       </div>
 
-      {isOwner && <p className="mt-2 text-sm text-muted">Invitations expire after {AGENCY_INVITE_TTL_DAYS} days. Send a new invitation if one expires.</p>}
+      {isOwner && <p className="mt-2 text-sm text-muted">Invitations expire after {AGENCY_INVITE_TTL_DAYS} days; an expired one stays listed here for a while so you can re-send it.</p>}
       {isOwner && data.invites.some((inv) => !inv.role) && (
         <div className="mt-3 space-y-2">
           {data.invites.filter((inv) => !inv.role).map((inv) => (
-            <div
-              key={inv.id}
-              className="flex items-center justify-between gap-3 rounded-2xl border border-dashed border-line bg-surface p-4"
-            >
-              <div className="min-w-0">
-                <p className="text-sm text-muted">{inv.email}</p>
-                <p className="text-xs text-amber-300/80">Invited · awaiting acceptance</p>
-              </div>
-              <button
-                onClick={() =>
-                  runGuarded(`revoke:${inv.id}`, { action: "revoke_invite", inviteId: inv.id })
-                }
-                disabled={busyKeys.has(`revoke:${inv.id}`)}
-                className="rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink disabled:opacity-50"
-              >
-                Revoke
-              </button>
-            </div>
+            <InviteRow key={inv.id} invite={inv} what="Invited" busyKeys={busyKeys} onResend={() => runGuarded(`resend:${inv.id}`, { action: "resend_invite", inviteId: inv.id })} onRevoke={() => runGuarded(`revoke:${inv.id}`, { action: "revoke_invite", inviteId: inv.id })} />
           ))}
         </div>
       )}
@@ -250,7 +306,7 @@ export default function AgencyClient() {
               <span>{c.fans} fans</span>
               <span>{c.spins} spins</span>
               <span>{c.pending} pending</span>
-              <span className="font-bold text-brand">{formatCents(c.revenue)}</span>
+              {c.revenue !== null && <span className="font-bold text-brand" title="Tips recorded">{formatCents(c.revenue)}</span>}
               {isOwner && (
                 <button
                   onClick={() => setConfirmRemove(`creator:${c.id}`)}
@@ -301,8 +357,11 @@ export default function AgencyClient() {
           Managers act for every creator in the agency; chatters, fulfillers and analysts only for the creators you tick below.
         </p>
       )}
+      {ownerSeat && (
+        <p data-testid="owner-seat-note" className="mt-2 text-xs text-muted">You hold a {ownerSeat.role === "owner" ? "owner's" : ownerSeat.role} seat here yourself, so you can work your creators&apos; inboxes, queues and campaigns.</p>
+      )}
       <div className="mt-3 space-y-2">
-        {data.members.map((m) => (
+        {staff.map((m) => (
           <div key={m.id} className="rounded-2xl border border-line bg-surface p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -369,29 +428,41 @@ export default function AgencyClient() {
           </div>
         ))}
         {isOwner && data.invites.filter((inv) => !!inv.role).map((inv) => (
-          <div
-            key={inv.id}
-            className="flex items-center justify-between gap-3 rounded-2xl border border-dashed border-line bg-surface p-4"
-          >
-            <div className="min-w-0">
-              <p className="text-sm text-muted">{inv.email}</p>
-              <p className="text-xs text-amber-300/80">Invited as {inv.role} · awaiting acceptance</p>
-            </div>
-            <button
-              onClick={() => runGuarded(`revoke:${inv.id}`, { action: "revoke_invite", inviteId: inv.id })}
-              disabled={busyKeys.has(`revoke:${inv.id}`)}
-              className="rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink disabled:opacity-50"
-            >
-              Revoke
-            </button>
-          </div>
+          <InviteRow key={inv.id} invite={inv} what={`Invited as ${inv.role}`} busyKeys={busyKeys} onResend={() => runGuarded(`resend:${inv.id}`, { action: "resend_invite", inviteId: inv.id })} onRevoke={() => runGuarded(`revoke:${inv.id}`, { action: "revoke_invite", inviteId: inv.id })} />
         ))}
-        {data.members.length === 0 && !data.invites.some((inv) => !!inv.role) && (
+        {staff.length === 0 && !data.invites.some((inv) => !!inv.role) && (
           <p className="text-sm text-muted">No staff seats yet.</p>
         )}
       </div>
 
       {canLeave === "staff" && <LeaveAgency kind="staff" orgId={org.id} orgName={org.name} onLeft={() => setLeft("staff")} />}
+      {/* WG-03: every other tie (a seat in another agency, the agency managing this account) has its own Leave. */}
+      {ties.filter((tie): tie is Tie & { kind: "staff" | "creator" } => tie.kind !== "owner" && tie.orgId !== org.id).map((tie) => (
+        <LeaveAgency key={tie.orgId} kind={tie.kind} orgId={tie.orgId} orgName={tie.orgName} onLeft={() => { setLoading(true); void refresh(); }} />
+      ))}
+    </div>
+  );
+}
+
+/** WG-06: a pending or run-out invitation with Resend and Revoke. */
+function InviteRow({ invite, what, busyKeys, onResend, onRevoke }: { invite: Invite; what: string; busyKeys: Set<string>; onResend: () => void; onRevoke: () => void }) {
+  const expiresOn = invite.expiresAt && Number.isFinite(Date.parse(invite.expiresAt)) ? new Date(invite.expiresAt).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : null;
+  return (
+    <div data-testid="agency-invite" data-expired={invite.expired ? "true" : undefined} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-line bg-surface p-4">
+      <div className="min-w-0">
+        <p className="text-sm text-muted">{invite.email}</p>
+        <p className={`text-xs ${invite.expired ? "text-red-300/90" : "text-amber-300/80"}`}>
+          {invite.expired ? `${what} · expired${expiresOn ? ` on ${expiresOn}` : ""} — re-send it to give them another ${AGENCY_INVITE_TTL_DAYS} days` : `${what} · awaiting acceptance${expiresOn ? ` · expires ${expiresOn}` : ""}`}
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <button onClick={onResend} disabled={busyKeys.has(`resend:${invite.id}`)} className="min-h-9 rounded-md border border-line px-2.5 text-xs font-semibold text-ink hover:bg-surface-2 disabled:opacity-50">
+          {busyKeys.has(`resend:${invite.id}`) ? "Sending…" : "Resend"}
+        </button>
+        <button onClick={onRevoke} disabled={busyKeys.has(`revoke:${invite.id}`)} className="min-h-9 rounded-md border border-line px-2.5 text-xs text-muted hover:text-ink disabled:opacity-50">
+          Revoke
+        </button>
+      </div>
     </div>
   );
 }

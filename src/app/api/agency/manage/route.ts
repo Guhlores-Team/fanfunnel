@@ -7,6 +7,7 @@ import {
   addOrgMember,
   removeOrgMember,
   scopeOrgCreator,
+  resendOrgInvite,
   type OrgRole,
 } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
@@ -22,7 +23,7 @@ export async function POST(req: Request) {
   const action = body.action as string;
   const s = (k: string) => String(body[k] ?? "");
 
-  let result: { ok: true } | { error: string };
+  let result: { ok: true; invite?: "new" | "pending" | "unknown" } | { error: string };
   switch (action) {
     case "create_org":
       result = await createOrg(s("name"));
@@ -44,6 +45,9 @@ export async function POST(req: Request) {
       break;
     case "scope_creator":
       result = await scopeOrgCreator(s("memberId"), s("creatorId"), Boolean(body.on));
+      break;
+    case "resend_invite": // WG-06
+      result = await resendOrgInvite(s("inviteId"));
       break;
     default:
       return badRequest("unknown_action");

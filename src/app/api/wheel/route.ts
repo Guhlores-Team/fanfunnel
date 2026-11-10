@@ -86,7 +86,7 @@ export async function PUT(req: Request) {
   if (rateLimited) return rateLimited;
   let config: WheelConfig;
   let expectedStock: ExpectedStock | null;
-  const body = await parseJsonBody<{ wheel?: unknown; expectedStock?: unknown }>(req);
+  const body = await parseJsonBody<{ wheel?: unknown; expectedStock?: unknown; expectedUpdatedAt?: unknown; draft?: unknown }>(req);
   if (body === BAD_REQUEST) return badRequest();
   try {
     config = (isJsonObject(body.wheel) ? body.wheel : body) as unknown as WheelConfig;
@@ -95,15 +95,24 @@ export async function PUT(req: Request) {
     return badRequest();
   }
   if (!expectedStock) return badRequest();
+  // 0073 (DB-11): the game version the editor loaded; a save over a newer one
+  // answers 409 game_changed. Absent (older tabs) saves without the check.
+  const expectedUpdatedAt = body.expectedUpdatedAt ?? null;
+  if (expectedUpdatedAt !== null && (typeof expectedUpdatedAt !== "string" || expectedUpdatedAt.length > 40 || !Number.isFinite(Date.parse(expectedUpdatedAt)))) return badRequest();
+  // WC-11: `draft: true` lets a never-published bingo game be stored unfinished.
+  if (body.draft !== undefined && typeof body.draft !== "boolean") return badRequest();
   if (!config || !Array.isArray(config.prizes) || !prizesValid(config.prizes)) {
     return badRequest();
   }
   const textCode = prizeTextCode(config.prizes);
   if (textCode) return badRequest(textCode);
+  // TS-04: the subtitle is public text too (spin page, /c).
+  const subtitle = publicTextCheck((config as { subtitle?: unknown }).subtitle, { field: "pageText" });
+  if (!subtitle.ok) return badRequest(subtitle.code);
   const checked = normalizeWheelPayload(config);
   if ("error" in checked) return badRequest(checked.error);
 
-  const result = await saveWheel(checked.config, { expectedStock });
+  const result = await saveWheel(checked.config, { expectedStock, expectedUpdatedAt, draft: body.draft === true });
   if ("error" in result) return errorResponse(result.error);
   await revalidateMyPublicPage();
   return NextResponse.json(result);

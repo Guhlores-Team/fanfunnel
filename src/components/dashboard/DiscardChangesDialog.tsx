@@ -10,6 +10,7 @@ import Modal from "@/components/ui/Modal";
  */
 export default function DiscardChangesDialog({
   what,
+  items,
   consequence = "Switching now throws them away.",
   pending = false,
   pendingTitle = "Delivery is still saving",
@@ -19,6 +20,8 @@ export default function DiscardChangesDialog({
 }: {
   /** What has unsaved edits, e.g. "this wheel". */
   what: string;
+  /** WC-19: the same things one by one; three or more are shown as a list. */
+  items?: string[];
   /** What happens on Discard, e.g. "Signing out now throws them away." */
   consequence?: string;
   /** An in-flight delivery cannot be safely discarded or abandoned. */
@@ -42,9 +45,21 @@ export default function DiscardChangesDialog({
           <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[#f59e0b]" />
           {pending ? pendingTitle : "Discard unsaved changes?"}
         </h2>
-        <p className="mt-2 text-[13.5px] text-muted text-pretty">
-          {pending ? pendingMessage : `You have edits to ${what} that aren’t saved. ${consequence}`}
-        </p>
+        {!pending && items && items.length >= 3 ? (
+          <div className="mt-2 text-[13.5px] text-muted text-pretty" data-testid="discard-list">
+            <p>You have unsaved edits in {items.length} places:</p>
+            <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-ink">
+              {items.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+            <p className="mt-2">{consequence}</p>
+          </div>
+        ) : (
+          <p className="mt-2 text-[13.5px] text-muted text-pretty">
+            {pending ? pendingMessage : `You have edits to ${what} that aren’t saved. ${consequence}`}
+          </p>
+        )}
         <div className="mt-5 flex gap-2">
           <button
             ref={keepRef}

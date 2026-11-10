@@ -37,6 +37,11 @@ const norm = (s: string) =>
     .toLowerCase();
 
 const SIGNED_IN_ONLY = [
+  // 0073 (TS-06): the Terms-change notice. Reading it needs a session (or the
+  // server's service client, which serves the public notice line); writing it
+  // runs as the caller and is_admin() (active admin, aal2) decides inside.
+  "legal_terms_upcoming",
+  "set_legal_terms_notice",
   "issue_creator_actor_context",
   "set_onboarding_dismissed",
   "set_leaderboard_enabled",

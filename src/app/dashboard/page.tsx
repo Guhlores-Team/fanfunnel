@@ -1,3 +1,4 @@
+import { shortCommit } from "@/lib/envLabel";
 import { redirect } from "next/navigation";
 import { brandVars } from "@/lib/theme";
 import DashboardClient from "@/components/dashboard/DashboardClient";
@@ -77,6 +78,7 @@ export default async function DashboardPage({
         initialWheel={initialWheel}
         initialOnboardingDismissed={onboardingDismissed}
         initialTab={initialTab}
+        commit={isAdmin ? shortCommit() : undefined}
       />
       <AppServiceWorker />
     </main>

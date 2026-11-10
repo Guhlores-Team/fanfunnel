@@ -155,6 +155,15 @@ export async function pushJourney(browser, { step, assert }, sink, ctx) {
       await p.getByTestId("notification-bell").click();
       const panel = p.getByRole("dialog", { name: "Notifications" });
       await panel.waitFor({ timeout: 5000 });
+      // WC-29: without push keys on the server the prompts are not offered
+      // (the Settings card still explains that push is not available).
+      if (!(await pushConfig(p.request)).available) {
+        await p.waitForTimeout(800);
+        assert((await p.getByTestId("bell-push-link").count()) === 0, "keys unset: the bell does not offer push");
+        await goto(p, "/dashboard?section=inbox", 1600);
+        assert((await p.getByTestId("inbox-push-optin").count()) === 0, "keys unset: the Inbox does not offer push");
+        return;
+      }
       await p.getByTestId("bell-push-link").click();
       await panel.waitFor({ state: "hidden", timeout: 4000 });
       await p.locator(CARD).waitFor({ timeout: 10000 });

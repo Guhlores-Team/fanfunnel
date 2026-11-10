@@ -11,6 +11,7 @@ import {
   mockSetMyDisplayName,
   mockSetMyNotificationPrefs,
   mockSetActiveWheelBrandColor,
+  mockDemoCreatorActive,
 } from "./mock";
 import { ensureWheelId, resolveActiveWheelId } from "./wheels";
 import { displayNameRpcError } from "@/lib/profileErrors";
@@ -191,6 +192,7 @@ export async function getMyAccount(): Promise<MyAccount> {
 export async function setMyDisplayName(
   name: string
 ): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) return mockSetMyDisplayName(name);
   const sb = await createClient();
   const {
@@ -229,6 +231,7 @@ export async function setMyNotificationPrefs(
 export async function setActiveWheelBrandColor(
   color: string
 ): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) return mockSetActiveWheelBrandColor(color);
   const sb = await createClient();
   const {

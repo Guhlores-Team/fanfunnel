@@ -198,7 +198,10 @@ export async function dashB6Journey(browser, { step, assert }, sink, ctx) {
       assert(!/\bbio\b/i.test(text), "it never suggests a bio");
       const url = await card.getByRole("textbox").inputValue();
       assert(new RegExp(`^${BASE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/spin/[A-Za-z0-9_-]+$`).test(url), `the card holds the spin link (${url})`);
-      for (const label of ["Copy", "Share"]) assert(await card.getByRole("button", { name: label, exact: true }).count() === 1, `${label} is offered`);
+      assert(await card.getByRole("button", { name: "Copy", exact: true }).count() === 1, "Copy is offered");
+      // b7 WC-23: Share appears only where the browser has a share sheet (else it would just copy again).
+      const hasShare = await page.evaluate(() => typeof navigator.share === "function");
+      assert(await card.getByRole("button", { name: "Share", exact: true }).count() === (hasShare ? 1 : 0), `Share is ${hasShare ? "offered" : "left out without Web Share"}`);
       await card.getByRole("button", { name: /QR/ }).first().waitFor({ timeout: 8000 }); // QR: code-split, appears once loaded
       await card.getByRole("button", { name: "Copy", exact: true }).click();
       await page.getByText(/Link copied|Couldn.t copy the link/).first().waitFor({ timeout: 4000 });
@@ -258,7 +261,7 @@ export async function dashB6Journey(browser, { step, assert }, sink, ctx) {
       await owed.waitFor({ timeout: 10000 });
       const text = await owed.innerText();
       assert(/fans? (is|are) owed \d+ prizes?/.test(text), `it says what fans are owed (${text})`);
-      assert(/who paid hold/.test(text) || /who paid holds/.test(text), "and the paid spins still held");
+      assert(/with recorded tips hold/.test(text) || /with recorded tips holds/.test(text), "and the granted spins still held");
       assert(await clear.getByRole("button", { name: "Permanently clear everything" }).isDisabled(), "RESET is still required");
       await clear.getByRole("button", { name: "Cancel" }).click();
     } finally {

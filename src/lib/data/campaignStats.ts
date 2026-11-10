@@ -3,6 +3,9 @@ import type { createClient } from "@/lib/supabase/server";
 import type { Rarity } from "@/lib/games/wheel/types";
 import type { Campaign, CampaignStats } from "./types";
 
+/** A win still owed to the fan: counted as "pending" on the Campaigns tab (RD-07). */
+export const OWED_REDEMPTION_STATUSES: ReadonlySet<string> = new Set(["pending", "in_progress"]);
+
 // Callers pass the creator's session client; this module never constructs a
 // privileged client. Every paged read retains the same RLS and creator scope.
 type SessionClient = Awaited<ReturnType<typeof createClient>>;
@@ -52,10 +55,13 @@ export async function campaignStatsFor(
 
   // Redemptions are matched through their spin (same set as "spin_id in this
   // campaign's spins") so no spin-id list has to travel in the URL.
-  const [grants, spins, fulfilledRows] = await Promise.all([
+  const [grants, spins, redemptionRows] = await Promise.all([
     readScopedRows<{ campaign_id: string; fan_id: string; spins: number; amount_cents: number }>(sb, "grants", "campaign_id, fan_id, spins, amount_cents", q => q.eq("creator_id", userId).in("campaign_id", ids), cutoff, pageSize),
     readScopedRows<{ campaign_id: string; prize_label: string; prize_rarity: Rarity; created_at: string; kind?: "play" | "bonus" }>(sb, "spins", "campaign_id, prize_label, prize_rarity, created_at, kind", q => q.eq("creator_id", userId).in("campaign_id", ids), cutoff, pageSize),
-    readScopedRows<{ spin: { campaign_id: string } | null }>(sb, "redemptions", "spin:spins!inner(campaign_id, creator_id)", q => q.eq("creator_id", userId).eq("status", "fulfilled").eq("spin.creator_id", userId).in("spin.campaign_id", ids), cutoff, pageSize),
+    // RD-07: every redemption of the campaign's spins, with its status, so
+    // "pending" is what is still owed (pending / in progress) and a cancelled
+    // win drops out of it instead of being counted forever.
+    readScopedRows<{ status: string; spin: { campaign_id: string } | null }>(sb, "redemptions", "status, spin:spins!inner(campaign_id, creator_id)", q => q.eq("creator_id", userId).eq("spin.creator_id", userId).in("spin.campaign_id", ids), cutoff, pageSize),
   ]);
   // Preserve the original first-award tie break after the stable ID traversal.
   spins.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
@@ -67,11 +73,12 @@ export async function campaignStatsFor(
     spinsPlayed: number;
     rewards: number;
     fulfilled: number;
+    pending: number;
     prizes: Map<string, { label: string; rarity: Rarity; count: number }>;
   };
   const acc = new Map<string, Acc>();
   for (const id of ids) {
-    acc.set(id, { spinsBought: 0, revenue: 0, fans: new Set(), spinsPlayed: 0, rewards: 0, fulfilled: 0, prizes: new Map() });
+    acc.set(id, { spinsBought: 0, revenue: 0, fans: new Set(), spinsPlayed: 0, rewards: 0, fulfilled: 0, pending: 0, prizes: new Map() });
   }
 
   for (const g of grants) {
@@ -92,9 +99,11 @@ export async function campaignStatsFor(
     if (cur) cur.count += 1;
     else a.prizes.set(s.prize_label, { label: s.prize_label, rarity: s.prize_rarity, count: 1 });
   }
-  for (const r of fulfilledRows) {
+  for (const r of redemptionRows) {
     const a = r.spin ? acc.get(r.spin.campaign_id) : undefined;
-    if (a) a.fulfilled += 1;
+    if (!a) continue;
+    if (r.status === "fulfilled") a.fulfilled += 1;
+    else if (OWED_REDEMPTION_STATUSES.has(r.status)) a.pending += 1;
   }
 
   return campaigns.map((campaign) => {
@@ -110,7 +119,7 @@ export async function campaignStatsFor(
       spinsPlayed: a.spinsPlayed,
       uniqueFans,
       fulfilled: a.fulfilled,
-      pending: Math.max(0, a.rewards - a.fulfilled),
+      pending: a.pending,
       playThroughPct: a.spinsBought > 0 ? a.spinsPlayed / a.spinsBought : 0,
       revenue: a.revenue,
       arpu: uniqueFans ? Math.round(a.revenue / uniqueFans) : 0,

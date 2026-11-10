@@ -8,7 +8,18 @@
 // when it happened after the creator last opened the bell. No server imports,
 // so the client can share the types.
 
-export type NotificationKind = "win" | "message" | "low_stock" | "out_of_spins" | "fan_deleted" | "approved" | "application";
+export type NotificationKind =
+  | "win"
+  | "message"
+  | "low_stock"
+  | "out_of_spins"
+  | "fan_deleted"
+  | "approved"
+  | "application"
+  | "overdue"
+  | "agency_dissolved"
+  | "agency_owner_suspended"
+  | "game_unlock_request";
 
 /** Where an item takes the creator, through the dashboard's in-app navigation. */
 export interface NotificationTarget {
@@ -72,6 +83,14 @@ export interface NotificationSources {
   approvals?: { id: string; at: string }[];
   /** C6: admins only — access requests waiting for review. */
   applications?: { id: string; name: string | null; at: string }[];
+  /** PR-10: wins past their due date (pending or in progress), oldest first. */
+  overdueWins?: { id: string; fanName: string; prizeLabel: string; dueAt: string; deadlineAt: string }[];
+  /** WG-04: the agency this account was tied to was dissolved (creator_notices). */
+  agencyDissolved?: { id: string; orgName: string; at: string }[];
+  /** WG-13: the owner of an agency this account holds a seat in was suspended. */
+  agencyOwnerSuspended?: { id: string; orgName: string; at: string }[];
+  /** PR-04: admins only — a creator asked for a locked game type. */
+  gameUnlockRequests?: { id: string; creatorName: string | null; game: string; at: string }[];
 }
 
 /** A limited prize is "low" at this many units left (0 = out of stock). */
@@ -130,6 +149,10 @@ export interface NotificationSourceFor {
   fan_deleted: NonNullable<NotificationSources["fanDeletions"]>[number];
   approved: NonNullable<NotificationSources["approvals"]>[number];
   application: NonNullable<NotificationSources["applications"]>[number];
+  overdue: { count: number; oldest: NonNullable<NotificationSources["overdueWins"]>[number]; at: string };
+  agency_dissolved: NonNullable<NotificationSources["agencyDissolved"]>[number];
+  agency_owner_suspended: NonNullable<NotificationSources["agencyOwnerSuspended"]>[number];
+  game_unlock_request: NonNullable<NotificationSources["gameUnlockRequests"]>[number];
 }
 
 /**
@@ -144,6 +167,10 @@ export const KIND_PREF: Record<NotificationKind, keyof FeedPrefs | null> = {
   fan_deleted: null,
   approved: null,
   application: null,
+  overdue: "newSpin",
+  agency_dissolved: null,
+  agency_owner_suspended: null,
+  game_unlock_request: null,
 };
 
 export function kindEnabled(kind: NotificationKind, prefs: FeedPrefs): boolean {
@@ -202,7 +229,7 @@ export function toNotificationItem<K extends NotificationKind>(
         id: `spins:${f.fanId}`,
         kind: "out_of_spins",
         title: `${f.fanName} is out of spins`,
-        body: "Top them up to keep them playing.",
+        body: "Grant more spins to keep them playing.",
         at: f.at,
         target: { section: "fans", fanName: f.fanName },
       };
@@ -227,6 +254,53 @@ export function toNotificationItem<K extends NotificationKind>(
         title: "New access request",
         body: `${name || "Someone"} asked for a creator account. Review it in Admin.`,
         at: a.at,
+        target: { section: "admin" },
+      };
+    }
+    case "overdue": {
+      // PR-10: one item for every win past its due date, re-surfaced when
+      // another one becomes overdue (its `at` is the newest deadline).
+      const o = source as NotificationSourceFor["overdue"];
+      return {
+        id: `overdue:${o.at.slice(0, 10)}`,
+        kind: "overdue",
+        title: o.count === 1 ? `1 prize is past its due date` : `${o.count} prizes are past their due date`,
+        body: `${o.oldest.prizeLabel} for ${o.oldest.fanName} was due ${o.oldest.dueAt.slice(0, 10)}. Fans see "waiting" until you deliver or cancel.`,
+        at: o.at,
+        target: { section: "prizes" },
+      };
+    }
+    case "agency_dissolved": {
+      const n = source as NotificationSourceFor["agency_dissolved"];
+      return {
+        id: `agency_dissolved:${n.id}`,
+        kind: "agency_dissolved",
+        title: `${n.orgName || "Your agency"} was dissolved`,
+        body: "Its owner closed their account. Every seat and management tie it held ended; your own account and data are untouched.",
+        at: n.at,
+        target: { section: "fans" },
+      };
+    }
+    case "agency_owner_suspended": {
+      const n = source as NotificationSourceFor["agency_owner_suspended"];
+      return {
+        id: `agency_owner_suspended:${n.id}`,
+        kind: "agency_owner_suspended",
+        title: `${n.orgName || "Your agency"} is paused`,
+        body: "Its owner's account was suspended by FanFunnel, so seats there can't open inboxes, queues or campaigns until it is reactivated.",
+        at: n.at,
+        target: { section: "fans" },
+      };
+    }
+    case "game_unlock_request": {
+      const r = source as NotificationSourceFor["game_unlock_request"];
+      const who = r.creatorName?.replace(/\s+/g, " ").trim().slice(0, 60);
+      return {
+        id: `unlock:${r.id}`,
+        kind: "game_unlock_request",
+        title: `${who || "A creator"} asked to enable ${r.game}`,
+        body: "Grant it under their account's Features in Admin.",
+        at: r.at,
         target: { section: "admin" },
       };
     }
@@ -279,6 +353,17 @@ export function buildNotificationItems(src: NotificationSources, prefs: FeedPref
   for (const a of src.approvals ?? []) items.push(toNotificationItem("approved", a));
   // Admin work, not an alert: always shown (only admins ever get the source).
   for (const a of src.applications ?? []) items.push(toNotificationItem("application", a));
+  for (const r of src.gameUnlockRequests ?? []) items.push(toNotificationItem("game_unlock_request", r));
+  // PR-10: late prizes follow the "wins" toggle, as one combined item.
+  const overdue = src.overdueWins ?? [];
+  if (overdue.length > 0 && kindEnabled("overdue", prefs)) {
+    const oldest = overdue.reduce((a, b) => (a.deadlineAt <= b.deadlineAt ? a : b));
+    const newest = overdue.reduce((a, b) => (a.deadlineAt >= b.deadlineAt ? a : b));
+    items.push(toNotificationItem("overdue", { count: overdue.length, oldest, at: newest.deadlineAt }));
+  }
+  // Agency notices are account notices: always shown.
+  for (const n of src.agencyDissolved ?? []) items.push(toNotificationItem("agency_dissolved", n));
+  for (const n of src.agencyOwnerSuspended ?? []) items.push(toNotificationItem("agency_owner_suspended", n));
   return items;
 }
 

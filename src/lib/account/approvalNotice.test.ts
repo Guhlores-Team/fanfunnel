@@ -161,7 +161,7 @@ async function main() {
   check("…and takes the creator to set up a game", feed.items[0].target.section === "editor" && /approved/i.test(feed.items[0].title));
   const root = join(import.meta.dirname, "../../..");
   const notifications = readFileSync(join(root, "src/lib/data/notifications.ts"), "utf8");
-  check("the feed reads both notice kinds for the signed-in account only", /\.in\("kind", \["fan_deleted_data", "creator_approved"\]\)/.test(notifications) && /\.eq\("creator_id", uid\)/.test(notifications));
+  check("the feed reads both notice kinds for the signed-in account only", /\.in\("kind", \["fan_deleted_data", "creator_approved"(, "[a-z_]+")*\]\)/.test(notifications) && /\.eq\("creator_id", uid\)/.test(notifications));
   const sql = readFileSync(join(root, "supabase/migrations/0066_seat_scopes_approval_notice.sql"), "utf8");
   check("0066 allows the creator_approved notice kind", /check \(kind in \('fan_deleted_data', 'creator_approved'\)\)/.test(sql));
 

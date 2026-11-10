@@ -235,9 +235,11 @@ function CampaignsWorkspace({ seat, onOpenGame }: { seat?: Seat; onOpenGame?: (w
         toast(
           data.error === "unauthorized"
             ? "Couldn't create campaign. Are you signed in?"
-            : data.error === "game_not_playable" || data.error === "not_found" || data.error === "forbidden"
-              ? `Couldn't create campaign. ${pinRefusal(data.error, seat)}`
-              : "Couldn't create campaign. Try again.",
+            : data.error === "name_taken"
+              ? "You already have a campaign with that name. Pick another so the Fans filter can tell them apart."
+              : data.error === "game_not_playable" || data.error === "not_found" || data.error === "forbidden"
+                ? `Couldn't create campaign. ${pinRefusal(data.error, seat)}`
+                : "Couldn't create campaign. Try again.",
           { tone: "error" }
         );
         return;
@@ -330,8 +332,8 @@ function CampaignsWorkspace({ seat, onOpenGame }: { seat?: Seat; onOpenGame?: (w
           <div className="mt-3">
             <StatGrid
               cells={[
-                { label: "Revenue", value: formatCents(uncat.revenue) },
-                { label: "Spins bought", value: uncat.spinsBought },
+                { label: "Tips recorded", value: formatCents(uncat.revenue) },
+                { label: "Spins granted", value: uncat.spinsBought },
                 { label: "Spins played", value: uncat.spinsPlayed },
                 { label: "Fans", value: uncat.fans },
               ]}
@@ -501,11 +503,11 @@ function CampaignCard({
 
   const plays = campaignGame(campaign, wheels, now);
   const cells = stats && [
-    { label: "Revenue", value: formatCents(stats.revenue) },
-    { label: "ARPU", value: formatCents(stats.arpu) },
-    { label: "Spins bought", value: stats.spinsBought },
+    { label: "Tips recorded", value: formatCents(stats.revenue) },
+    { label: "Tips per fan", value: formatCents(stats.arpu) },
+    { label: "Spins granted", value: stats.spinsBought },
     { label: "Spins played", value: stats.spinsPlayed },
-    { label: "Play-through", value: `${Math.round(stats.playThroughPct * 100)}%` },
+    { label: "Spins used", value: `${Math.round(stats.playThroughPct * 100)}%` },
     { label: "Unique fans", value: stats.uniqueFans },
     { label: "Fulfilled", value: stats.fulfilled },
     { label: "Pending", value: stats.pending },

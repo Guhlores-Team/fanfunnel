@@ -32,6 +32,8 @@ export function editableGamePayload(wheel: CreatorGameWheel): CreatorGameWheel {
   const value = { ...wheel };
   delete value.gameKindLocked;
   delete value.gameReady;
+  // The version travels beside the game as `expectedUpdatedAt`, never in it.
+  delete value.updatedAt;
   return value;
 }
 
@@ -57,6 +59,34 @@ export function bingoMissing(wheel: CreatorGameWheel): string[] {
   if (!linePrizeId) missing.push("a line prize: choose it under Line prize (its normal tickets may be zero)");
   else if (!wheel.prizes.some((prize) => prize.id === linePrizeId)) missing.push("a line prize from this game: Choose a saved line prize, the one chosen is no longer in this game");
   return missing;
+}
+
+/**
+ * WC-11: the three things a bingo game needs before fans can play it, each
+ * with a tick, so the rules read as a checklist instead of one long sentence.
+ */
+export function bingoChecklist(wheel: CreatorGameWheel): { key: "squares" | "fallback" | "linePrize"; label: string; done: boolean }[] {
+  const squares = Math.min(bingoSquareCount(wheel), BINGO_CELL_COUNT);
+  const config = wheel.gameConfig as { linePrizeId?: unknown } | undefined;
+  const linePrizeId = typeof config?.linePrizeId === "string" && config.linePrizeId ? config.linePrizeId : null;
+  return [
+    { key: "squares", label: `${BINGO_CELL_COUNT} card-square prizes (${squares} of ${BINGO_CELL_COUNT})`, done: squares >= BINGO_CELL_COUNT },
+    { key: "fallback", label: "A rare, epic or legendary prize with unlimited stock", done: wheel.prizes.filter(bingoEligible).some(isRareBonus) },
+    { key: "linePrize", label: "A line prize", done: !!linePrizeId && wheel.prizes.some((prize) => prize.id === linePrizeId) },
+  ];
+}
+
+/**
+ * WC-11: a bingo game that was never published can be saved unfinished (an
+ * inactive draft) when the only open items are the bingo checklist. The
+ * base prize rules (two named prizes, tickets) still have to pass.
+ */
+export function canSaveBingoDraft(wheel: CreatorGameWheel, savedJson: string, baseIssues: readonly unknown[]): boolean {
+  if (creatorGameKind(wheel) !== "bingo" || baseIssues.length > 0 || bingoMissing(wheel).length === 0) return false;
+  try {
+    const saved = JSON.parse(savedJson) as CreatorGameWheel;
+    return saved.id === wheel.id && saved.gameReady === false;
+  } catch { return false; }
 }
 
 function listText(items: string[]): string {

@@ -6,6 +6,9 @@ import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
 import type { CreatorOverview, RedemptionItem, RedemptionStatus } from "@/lib/data/types";
 import { OVERVIEW_REDEMPTION_WINDOW } from "@/lib/data/queueWindow";
 import { useToast } from "@/components/ui/Toast";
+import { useNow } from "@/lib/hooks/useNow";
+import { dueDateInRange, dueDateValue, dueDayLabel, isOverdue, localDayPlus } from "@/lib/dueDate";
+import { formatWhen } from "@/lib/localTime";
 
 // 24×24 stroke paths (Command Center prototype line icons).
 const P = {
@@ -94,7 +97,24 @@ export default function PrizesPanel({
   // be loaded again, so no prize can fall into a gap between the two lists.
   const [older, setOlder] = useState<{ key: string; anchor: string; items: RedemptionItem[]; next: string | null } | null>(null);
   const [olderBusy, setOlderBusy] = useState(false);
+  // WC-26: rows whose status change is on its way, so a second tap cannot race it.
+  const [statusBusy, setStatusBusy] = useState<ReadonlySet<string>>(new Set());
   const [olderError, setOlderError] = useState(false);
+  // PR-10: the creator's delivery promise (Settings › Public page), used to
+  // suggest an expected-by date on wins that have no due date yet.
+  const [deliveryDays, setDeliveryDays] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/public-profile", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((p) => {
+        if (live && p && Number.isInteger(p.deliveryDays) && p.deliveryDays > 0) setDeliveryDays(p.deliveryDays);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const toast = useToast();
   // PATCH a redemption: status and/or notes/dueAt. Optimistically patch the
@@ -110,6 +130,15 @@ export default function PrizesPanel({
       );
     };
     apply(patch);
+    const statusChange = "status" in patch;
+    const markBusy = (on: boolean) =>
+      setStatusBusy((set) => {
+        const next = new Set(set);
+        if (on) next.add(id);
+        else next.delete(id);
+        return next;
+      });
+    if (statusChange) markBusy(true);
     let error: string | null = null;
     try {
       const res = await fetch(`/api/redemptions/${id}`, {
@@ -124,6 +153,17 @@ export default function PrizesPanel({
         toast("Prize cancelled. Its limited unit is back in stock.", { tone: "success" });
       } else if (body?.stock === "taken") {
         toast("Prize reopened. One limited unit is set aside for this fan again.", { tone: "success" });
+      } else if ("status" in patch && patch.status && before && patch.status !== "cancelled") {
+        // WC-06 / WG-08: the row leaves the current filter, so say what
+        // happened and offer a way back for a mis-tap.
+        const was = before.status;
+        const said = patch.status === "fulfilled" ? "Marked fulfilled" : patch.status === "in_progress" ? "Marked in progress" : "Reopened";
+        toast(`${said}: ${before.prizeLabel} for ${before.fanName}.`, {
+          tone: "success",
+          duration: 8000,
+          key: `status:${id}`,
+          action: { label: "Undo", onClick: () => void patchRow(id, { status: was }) },
+        });
       } else if ("notes" in patch || "dueAt" in patch) {
         // The note and due date save on blur with no button, so confirm it.
         toast("notes" in patch ? (patch.notes ? "Note saved" : "Note cleared") : patch.dueAt ? "Due date saved" : "Due date cleared", { tone: "success" });
@@ -131,6 +171,7 @@ export default function PrizesPanel({
     } catch {
       error = "network";
     }
+    if (statusChange) markBusy(false);
     if (error !== null) {
       if (before) {
         const restore: Partial<RedemptionItem> = {};
@@ -213,10 +254,16 @@ export default function PrizesPanel({
           <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand)]" />
           Prize queue
         </h2>
-        <button type="button" onClick={refresh} className={ghostBtn}>
-          <Glyph d={P.refresh} size={14} />
-          Refresh
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* PR-07: the queue (current status filter) as a spreadsheet. */}
+          <a href={`/api/redemptions/export${filter === "all" ? "" : `?status=${filter}`}`} download className={ghostBtn} data-testid="queue-export">
+            Export CSV
+          </a>
+          <button type="button" onClick={refresh} className={ghostBtn}>
+            <Glyph d={P.refresh} size={14} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       <div className="mb-3.5 flex flex-wrap items-center gap-2">
@@ -284,7 +331,7 @@ export default function PrizesPanel({
       {shown.length > 0 && (
         <ul className="flex flex-col gap-2">
           {shown.map((r) => (
-            <RedemptionRow key={r.id} r={r} onSet={setStatus} onPatch={patchRow} onOpenFan={onOpenFan} onMessageFan={onMessageFan} />
+            <RedemptionRow key={r.id} r={r} onSet={setStatus} onPatch={patchRow} onOpenFan={onOpenFan} onMessageFan={onMessageFan} deliveryDays={deliveryDays} busy={statusBusy.has(r.id)} />
           ))}
         </ul>
       )}
@@ -364,15 +411,22 @@ function RedemptionRow({
   onPatch,
   onOpenFan,
   onMessageFan,
+  deliveryDays = null,
+  busy = false,
 }: {
   r: RedemptionItem;
   onSet: (id: string, status: RedemptionStatus) => void;
   onPatch: (id: string, patch: Patch) => void;
   onOpenFan?: (fanId: string) => void;
   onMessageFan?: (fanId: string) => void;
+  /** PR-10: the creator's delivery promise in days, when one is set. */
+  deliveryDays?: number | null;
+  /** A status change for this row is being saved. */
+  busy?: boolean;
 }) {
   const fanId = r.fanId ?? null;
   const color = RARITY_COLORS[r.rarity];
+  const toast = useToast();
   const [notes, setNotes] = useState(r.notes ?? "");
   // Keep the local draft in sync when the row is refreshed from the server.
   useEffect(() => {
@@ -380,13 +434,22 @@ function RedemptionRow({
     setNotes(r.notes ?? "");
   }, [r.notes]);
 
-  const dueValue = r.dueAt ? r.dueAt.slice(0, 10) : "";
-  const overdue =
-    !!r.dueAt &&
-    r.status !== "fulfilled" &&
-    r.status !== "cancelled" &&
-    // eslint-disable-next-line react-hooks/purity -- comparing a due date to "now" is inherently time-dependent
-    new Date(r.dueAt).getTime() < Date.now();
+  // RD-06: the due date is a draft until it is a complete, sane day; it is
+  // committed on blur / Enter / a picker choice, never per keystroke.
+  const savedDue = dueDateValue(r.dueAt);
+  const [dueDraft, setDueDraft] = useState(savedDue);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync draft to refreshed prop
+    setDueDraft(savedDue);
+  }, [savedDue]);
+  const now = useNow(60_000);
+  const overdue = now !== null && isOverdue(r.dueAt, r.status, now);
+  // PR-10: a win with no due date inherits the creator's delivery promise as
+  // its suggested expected-by day; one click makes it the due date.
+  const suggestedDue =
+    deliveryDays && !r.auto && !savedDue && (r.status === "pending" || r.status === "in_progress")
+      ? localDayPlus(deliveryDays, new Date(r.at).getTime())
+      : "";
   const subject = `${r.prizeLabel} for ${r.fanName}`;
   const canCancel = !r.auto && r.status !== "cancelled" && r.status !== "fulfilled";
   // "Cancel prize" asks first, in a full-width strip under the row header (so
@@ -404,6 +467,22 @@ function RedemptionRow({
   function commitNotes() {
     const next = notes.trim() ? notes : null;
     if ((r.notes ?? "") !== (next ?? "")) onPatch(r.id, { notes: next });
+  }
+  function commitDue(value: string, { onBlur = false } = {}) {
+    if (value === savedDue) return;
+    if (value === "") {
+      // Clearing is only final once the field is left (typing passes through "").
+      if (onBlur) onPatch(r.id, { dueAt: null });
+      return;
+    }
+    if (!dueDateInRange(value)) {
+      if (onBlur) {
+        toast("Pick a date within the last year or the next ten years.", { tone: "error" });
+        setDueDraft(savedDue);
+      }
+      return;
+    }
+    onPatch(r.id, { dueAt: value });
   }
 
   return (
@@ -433,7 +512,7 @@ function RedemptionRow({
                   data-testid="redemption-fan"
                   onClick={() => onOpenFan(fanId)}
                   aria-label={`Open ${r.fanName}'s fan details`}
-                  className="font-semibold text-ink underline decoration-dotted underline-offset-2 hover:decoration-solid"
+                  className="relative font-semibold text-ink underline decoration-dotted underline-offset-2 hover:decoration-solid max-sm:after:absolute max-sm:after:-inset-y-3 max-sm:after:inset-x-0 max-sm:after:content-['']"
                 >
                   {r.fanName}
                 </button>
@@ -442,14 +521,20 @@ function RedemptionRow({
               )}{" "}
               ·{" "}
               <time dateTime={r.at} className="tnum">
-                {new Date(r.at).toLocaleString()}
+                {formatWhen(r.at)}
               </time>
             </p>
+            {/* WG-07: a status a team member set for the creator says who. */}
+            {r.via && r.status !== "pending" && (
+              <p data-testid="redemption-via" className="mt-1 break-words text-xs text-muted">
+                {r.status === "fulfilled" ? "Marked fulfilled" : r.status === "cancelled" ? "Cancelled" : "Started"} by {r.via}
+              </p>
+            )}
             {r.auto && (
               <p data-testid="reward-view-count" className="mt-1 break-words text-xs text-muted">
                 {r.auto.views > 0 ? `Viewed by fan · ${r.auto.views}×` : "Not viewed by fan yet"}
                 {r.auto.lastViewedAt && Number.isFinite(Date.parse(r.auto.lastViewedAt)) && (
-                  <> · last <time dateTime={r.auto.lastViewedAt}>{new Date(r.auto.lastViewedAt).toLocaleString()}</time></>
+                  <> · last <time dateTime={r.auto.lastViewedAt}>{formatWhen(r.auto.lastViewedAt)}</time></>
                 )}
               </p>
             )}
@@ -470,10 +555,12 @@ function RedemptionRow({
           <button
             type="button"
             onClick={() => onSet(r.id, STATUS_NEXT[r.status])}
+            disabled={busy}
+            aria-busy={busy}
             aria-label={`${STATUS_CTA[r.status]}: ${subject}`}
             className="btn-brand min-h-9 rounded-[9px] px-3.5 text-[12.5px] font-bold"
           >
-            {STATUS_CTA[r.status]}
+            {busy ? "Saving…" : STATUS_CTA[r.status]}
           </button>
           )}
           {fanId && onMessageFan && (
@@ -536,13 +623,33 @@ function RedemptionRow({
           <input
             type="date"
             className="ff-input tnum min-w-0 py-1.5 text-[13px]"
-            value={dueValue}
+            value={dueDraft}
             disabled={!!r.auto}
             title={r.auto ? "Already delivered instantly" : undefined}
-            onChange={(e) =>
-              onPatch(r.id, { dueAt: e.target.value ? e.target.value : null })
-            }
+            onChange={(e) => {
+              setDueDraft(e.target.value);
+              commitDue(e.target.value);
+            }}
+            onBlur={(e) => commitDue(e.target.value, { onBlur: true })}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
           />
+          {suggestedDue && (
+            <span className="text-[11.5px] text-muted" data-testid="expected-by">
+              Expected by {dueDayLabel(suggestedDue)} ({deliveryDays}-day promise).{" "}
+              <button
+                type="button"
+                className="font-semibold text-brand underline-offset-2 hover:underline"
+                onClick={() => {
+                  setDueDraft(suggestedDue);
+                  commitDue(suggestedDue);
+                }}
+              >
+                Use it
+              </button>
+            </span>
+          )}
         </label>
       </div>
     </li>

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { copyLinkToken, fanRowMeta, threadFanIds } from "./fansHelpers";
+import { copyLinkToken, fanRowMeta, sortFans, threadFanIds } from "./fansHelpers";
 
 // P33: campaign names are part of the row meta line (they were chips on main).
 {
@@ -81,6 +81,26 @@ import { copyLinkToken, fanRowMeta, threadFanIds } from "./fansHelpers";
   for (const use of ["copyToClipboard(primaryUrl)", "link: primaryUrl", "<QrButton url={primaryUrl}"]) {
     assert.ok(drawer.includes(use), `the drawer's ${use.split("(")[0].split(" ")[0]} uses the active-link URL`);
   }
+}
+
+// PR-11: sorting the loaded fans; "newest" keeps the server's order.
+{
+  const fan = (fanId: string, over: Partial<import("@/lib/data/types").FanAccountSummary>) => ({
+    fanId, name: fanId, spinsRemaining: 0, grantedTotal: 0, primaryToken: null, totalSpent: 0, campaignNames: [], tags: [], links: [], passes: [],
+    lastWin: null, blocked: false, selfExcluded: false, activeToken: null, ...over,
+  });
+  const fans = [
+    fan("a", { totalSpent: 100, spinsRemaining: 2, lastWin: { label: "x", rarity: "common", at: "2026-11-01T00:00:00Z" } }),
+    fan("b", { totalSpent: 900, spinsRemaining: 0 }),
+    fan("c", { totalSpent: 500, spinsRemaining: 7, lastWin: { label: "y", rarity: "rare", at: "2026-11-09T00:00:00Z" } }),
+  ];
+  const ids = (list: { fanId: string }[]) => list.map((f) => f.fanId).join("");
+  assert.equal(ids(sortFans(fans, "newest")), "abc", "newest keeps the server order");
+  assert.equal(ids(sortFans(fans, "spent")), "bca", "most tips first");
+  assert.equal(ids(sortFans(fans, "lastActive")), "cab", "last active first; never-active last");
+  assert.equal(ids(sortFans(fans, "spinsLeft")), "cab", "most spins left first");
+  assert.equal(ids(sortFans(fans, "fewestSpins")), "bac", "fewest spins left first");
+  assert.equal(ids(fans), "abc", "sorting never mutates the loaded list");
 }
 
 console.log("fansHelpers.test: all checks passed");

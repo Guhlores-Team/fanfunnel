@@ -36,7 +36,10 @@ export async function GET(req: Request) {
   if (creatorId !== null && creatorId.length > 64) return badRequest();
   if (status !== undefined && !VALID.includes(status as RedemptionStatus)) return badRequest();
   if (q.length > 100 || (before !== null && before.length > 120)) return badRequest();
-  const page = await listRedemptionQueue({ status: status as RedemptionStatus | undefined, query: q, before, creatorId: creatorId ?? undefined });
+  // 0073 (DB-10): `fanId` narrows the queue to one fan's prizes.
+  const fanId = url.searchParams.get("fanId");
+  if (fanId !== null && (fanId.length === 0 || fanId.length > 64)) return badRequest();
+  const page = await listRedemptionQueue({ status: status as RedemptionStatus | undefined, query: q, before, creatorId: creatorId ?? undefined, fanId });
   if ("error" in page) return page.error === "db_error" ? NextResponse.json({ error: "db_error" }, { status: 500 }) : errorResponse(page.error);
   return NextResponse.json(page, { headers: { "Cache-Control": "no-store" } });
 }

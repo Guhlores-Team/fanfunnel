@@ -1,5 +1,6 @@
 "use client";
 
+import { withSuspendedReason } from "@/lib/onboarding/suspended";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CreatorFocusView } from "@/lib/data/focusView";
 import type { WheelConfig } from "@/lib/games/wheel/types";
@@ -148,7 +149,9 @@ export default function FocusPackPanel({ fanId, initialPackId, onChanged, refres
   }
   return <section data-testid="creator-focus-panel" className="rounded-xl border border-line p-3.5">
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-[13px] font-bold text-ink">Focus &amp; Chase packs</h3><button type="button" disabled={busy} className={button} onClick={() => void load().catch(() => setError("Couldn't refresh pack eligibility."))}>Refresh status</button></div>
-    {error && <p role="alert" className="mt-2 text-xs text-amber-200">{error}</p>}
+    {/* WC-20: say what these are before asking the creator to choose one. */}
+    <p className="mt-1 text-xs text-muted text-pretty">Optional extras for one fan: a Focus pack raises the odds of one prize for a set number of spins; a Chase pack guarantees that prize within a set number of spins.</p>
+    {error && <p role="alert" className="mt-2 text-xs text-amber-200">{withSuspendedReason(error)}</p>}
     {status && <p role="status" className="mt-2 text-xs text-ink">{status}</p>}
     {!data && <button type="button" className={`${button} mt-2`} onClick={() => void load().catch(() => setError("Couldn't load pack eligibility."))}>Refresh eligibility</button>}
     {data?.focus && <div data-testid="creator-current-focus" className="mt-2 space-y-1 text-xs text-muted">

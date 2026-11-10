@@ -270,7 +270,7 @@ export async function creatorJourney(page, { step, assert }) {
     // funnel is the third card of the trend row (same grid as the two trends).
     const text = await page.locator("body").innerText();
     assert(/Daily spins over time\./.test(text), "spins trend keeps its 'Daily spins over time.' sub-line");
-    assert(/Daily revenue over time\./.test(text), "revenue trend keeps its 'Daily revenue over time.' sub-line");
+    assert(/Daily tips recorded over time\./.test(text), "tips trend keeps its 'Daily tips recorded over time.' sub-line");
     const sameRow = await page.evaluate(() => {
       const h3s = [...document.querySelectorAll("h3")];
       const card = (re) => h3s.find((h) => re.test(h.textContent.trim()))?.closest("section");
@@ -669,7 +669,7 @@ export async function creatorExtras(page, { step, assert }, ctx) {
     assert(await drawer.isVisible(), "Esc on the menu leaves the drawer open");
     // Toasts enter transform-only (README motion rule): never an opacity-0 start.
     await drawer.getByRole("button", { name: "Copy link" }).click();
-    const toast = page.locator("[aria-live='polite'] > button").first();
+    const toast = page.locator("[aria-live='polite'] > [data-testid='toast']").first(); // b7 RD-21: a toast is a region, not a button
     await toast.waitFor({ timeout: 4000 });
     const style = await toast.evaluate((el) => ({ opacity: getComputedStyle(el).opacity, name: getComputedStyle(el).animationName }));
     assert(style.opacity === "1" && style.name !== "ff-rise", `the toast is fully opaque from its first frame (${style.opacity}, ${style.name})`);
@@ -679,6 +679,9 @@ export async function creatorExtras(page, { step, assert }, ctx) {
 
   await step("keyboard: the first Tab after load lands on the sidebar's current section", async () => {
     await goto(page, "/dashboard", 1600);
+    await page.keyboard.press("Tab");
+    // b7 PA-12: the skip link is the first stop; the sidebar follows it.
+    assert(await page.evaluate(() => document.activeElement?.getAttribute("data-testid") === "skip-to-content"), "the first Tab stop is the skip link");
     await page.keyboard.press("Tab");
     const focused = await page.evaluate(() => {
       const a = document.activeElement;
@@ -1246,6 +1249,12 @@ export async function firstRunJourney(page, { step, assert }, ctx) {
       page.waitForResponse((r) => r.url().includes("/api/account/onboarding") && r.request().method() === "POST").catch(() => null);
     let wait = persisted();
     await list().getByRole("button", { name: /^Dismiss/ }).click();
+    // b7 WC-22: one inline confirm before the checklist goes away.
+    assert(await list().getByTestId("first-steps-confirm").count(), "dismiss asks first");
+    await list().getByRole("button", { name: "Keep them" }).click();
+    assert(await list().count(), "'Keep them' leaves the checklist in place");
+    await list().getByRole("button", { name: /^Dismiss/ }).click();
+    await list().getByRole("button", { name: "Hide them" }).click();
     await wait;
     await list().waitFor({ state: "hidden", timeout: 4000 }).catch(() => {});
     assert((await list().count()) === 0, "dismiss hides the checklist");
