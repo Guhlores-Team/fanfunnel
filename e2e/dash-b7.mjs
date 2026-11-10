@@ -862,7 +862,7 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       // A suspended seat whose console still loads keeps the banner above it.
       await page.route(path("/api/agency"), (route) => route.fulfill({ json: { org: { id: "0b0b0b0b-0000-4000-8000-00000000000b", name: "B7 Talent" }, isOwner: false, ownerActive: true, totals: { creators: 0, fans: 0, spins: 0, pending: 0, revenue: 0 }, creators: [], members: [], invites: [] } }));
       await goto(page, "/agency", 1200);
-      await page.getByRole("heading", { name: "B7 Talent" }).waitFor({ timeout: 10000 });
+      await page.getByRole("heading", { name: "B7 Talent", exact: true, level: 1 }).waitFor({ timeout: 10000 });
       assert(await page.getByTestId("suspended-banner").isVisible(), "the banner sits above a console that still loads");
       await page.unroute(path("/api/agency"));
 
@@ -898,11 +898,11 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
 
       body = seat(true);
       await goto(page, "/agency", 1200);
-      await page.getByRole("heading", { name: "B7 Talent" }).waitFor({ timeout: 10000 });
+      await page.getByRole("heading", { name: "B7 Talent", exact: true, level: 1 }).waitFor({ timeout: 10000 });
       assert((await notice.count()) === 0, "no notice while the owner is in good standing");
       body = seat(null);
       await goto(page, "/agency", 1200);
-      await page.getByRole("heading", { name: "B7 Talent" }).waitFor({ timeout: 10000 });
+      await page.getByRole("heading", { name: "B7 Talent", exact: true, level: 1 }).waitFor({ timeout: 10000 });
       assert((await notice.count()) === 0, "no notice when the owner's standing is unknown");
 
       body = { org: null, managed: true, orgId: org.id, orgName: org.name, ownerActive: false };
