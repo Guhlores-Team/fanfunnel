@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdminRoute } from "@/lib/auth/admin";
+import { limitRoute } from "@/lib/api/limit";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { listAppErrors, resolveAppError, type ErrorStatusFilter } from "@/lib/data/appErrors";
 import { recordAudit } from "@/lib/data/audit";
@@ -15,6 +16,9 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // GET ?status=open|resolved&env=production|preview|development
 export async function GET(req: Request) {
+  // RS-11: per-client cap (and the fast 401 without a session cookie) first.
+  const capped = await limitRoute(req, "admin/errors:GET");
+  if (capped) return capped;
   const admin = await requireAdminRoute();
   if (!admin.ok) return admin.response;
   const url = new URL(req.url);
@@ -32,6 +36,8 @@ export async function GET(req: Request) {
 
 // POST { id, resolved } — resolve (or reopen) one grouped error.
 export async function POST(req: Request) {
+  const capped = await limitRoute(req, "admin/errors:POST");
+  if (capped) return capped;
   const admin = await requireAdminRoute();
   if (!admin.ok) return admin.response;
   const body = await parseJsonBody<{ id?: unknown; resolved?: unknown }>(req);

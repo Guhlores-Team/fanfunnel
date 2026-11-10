@@ -2,9 +2,11 @@ import assert from "node:assert";
 import { mock } from "node:test";
 
 // GET /api/cron/retention: only Vercel Cron (Bearer CRON_SECRET) can trigger
-// deletions. Negative cases: no secret configured (fails closed, 503), a short
-// secret, a missing/wrong header → nothing runs. Positive: the RPC gets exactly
-// the periods from src/lib/privacy/retention.ts and a summary is logged.
+// deletions. Negative cases: no secret configured (fails closed, 401 like a
+// wrong one: WA-09), a short secret, a missing/wrong header → nothing runs.
+// Positive: the RPC gets exactly the periods from src/lib/privacy/retention.ts
+// and a summary is logged. OPS3-10: every step runs under its own deadline, a
+// failed step is named and the run continues; RS-05 maxDuration = 300.
 
 let passed = 0;
 const check = (label: string, cond: unknown) => {
@@ -22,14 +24,17 @@ let storageRuns = 0;
 let storage = { completed: 0, pending: 0, failed: 0, reviewRequired: 0, accountsCompleted: 0, accountsPending: 0 };
 mock.module("@/lib/storage/work", { namedExports: { processPendingStorageWork: async () => { storageRuns++; return storage; } } });
 
+const pushResumed = 2;
 mock.module("@/lib/supabase/server", {
   namedExports: {
     isSupabaseConfigured: () => true,
     createServiceClient: () => ({
-      rpc: async (fn: string, args: Record<string, number>) => {
+      rpc: (fn: string, args: Record<string, number>) => {
         rpcCalls.push({ fn, args });
-        return { data: deleted, error: null };
+        const reply = { data: deleted, error: null };
+        return Object.assign(Promise.resolve(reply), { abortSignal: async (signal: AbortSignal) => { assert.ok(signal instanceof AbortSignal, "the cleanup RPC carries a deadline"); return reply; } });
       },
+      from: (table: string) => ({ update: () => ({ gte: async () => { assert.equal(table, "push_subscriptions"); return { count: pushResumed, error: null }; } }) }),
     }),
   },
 });
@@ -51,11 +56,11 @@ async function main() {
 
   delete process.env.CRON_SECRET;
   let res = await call(`Bearer ${SECRET}`);
-  check("no CRON_SECRET → 503, nothing runs", res.status === 503 && rpcCalls.length === 0);
+  check("WA-09: no CRON_SECRET → 401 unauthorized (not a 503 that reveals it), nothing runs", res.status === 401 && (await res.json()).error === "unauthorized" && rpcCalls.length === 0);
 
   process.env.CRON_SECRET = "short";
   res = await call("Bearer short");
-  check("a too-short secret is refused", res.status === 503 && rpcCalls.length === 0);
+  check("a too-short secret is refused the same way", res.status === 401 && rpcCalls.length === 0);
 
   process.env.CRON_SECRET = SECRET;
   for (const h of [undefined, SECRET, `Bearer ${SECRET}x`, `bearer ${SECRET}`, "Bearer "]) {
@@ -69,6 +74,12 @@ async function main() {
 
   res = await call(`Bearer ${SECRET}`);
   check("right header → 200", res.status === 200 && /no-store/.test(res.headers.get("cache-control") ?? ""));
+  const okBody = await res.json();
+  check("OPS3-10: every step is reported ok with its duration", Array.isArray(okBody.steps) && okBody.steps.map((s: { step: string }) => s.step).join(",") === "cleanup,health,deletions,storage,push,digest" && okBody.steps.every((s: { status: string; ms: number }) => s.status === "ok" && Number.isFinite(s.ms)));
+  check("OPS3-09: paused push devices were resumed", okBody.pushResumed === 2);
+  check("OPS3-08: the heartbeat outcome is in the answer", okBody.heartbeat === "off");
+  const { maxDuration, STEP_TIMEOUT_MS, RUN_LOCK_TTL_MS } = await import("./route");
+  check("RS-05: maxDuration = 300, steps bounded, lock TTL covers a full run", maxDuration === 300 && STEP_TIMEOUT_MS === 60_000 && RUN_LOCK_TTL_MS === 300_000);
   check(
     "the RPC gets the documented periods",
     rpcCalls.length === 1 && rpcCalls[0].fn === "run_retention_cleanup" &&

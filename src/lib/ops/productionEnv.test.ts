@@ -30,7 +30,7 @@ function main() {
   }
   const bad: [string, string][] = [
     ["NEXT_PUBLIC_SUPABASE_URL", "http://abc.supabase.co"], ["NEXT_PUBLIC_SUPABASE_URL", "https://abc.supabase.co/rest/v1"],
-    ["NEXT_PUBLIC_SUPABASE_ANON_KEY", JWT + " "], ["SUPABASE_SERVICE_ROLE_KEY", "eyJ.x"], ["CRON_SECRET", "short"], ["CRON_SECRET", "has a space in it yes"],
+    ["NEXT_PUBLIC_SUPABASE_ANON_KEY", JWT.replace(".", ". ")], ["SUPABASE_SERVICE_ROLE_KEY", "eyJ.x"], ["CRON_SECRET", "short"], ["CRON_SECRET", "has a space in it yes"],
     ["REWARD_ENCRYPTION_KEY", Buffer.alloc(31, 1).toString("base64")], ["REWARD_ENCRYPTION_KEY", "not base64!!"], ["REWARD_CODE_FINGERPRINT_KEY", Buffer.alloc(33, 1).toString("base64")],
     ["RESEND_API_KEY", "sk_test_abcdef"], ["ALERT_EMAIL_TO", "notanemail"], ["ALERT_EMAIL_TO", "a@b.co, nope"],
   ];

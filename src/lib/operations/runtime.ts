@@ -90,5 +90,11 @@ export async function runOperationalChecks(source: "manual" | "maintenance", svc
   const [canary, invariants, schema] = await Promise.all([bootstrapEmptyCanary(client), readLedgerInvariants(client), readSchemaVersion(client)]);
   const summary = await persistHealth(client, source, canary, invariants);
   await reportOperationalFailure(canary, invariants, schema);
-  return { demo: false, ok: canary.status === "healthy" && invariants.status === "healthy" && schemaHealthy(schema) && summary !== null && summary.canaryFailureAt === null, canary, invariants, schema, summary };
+  // OPS3-05: a healthy run is healthy. The persisted canary_failure_at latch
+  // (one earlier blip, e.g. a 3 s timeout at an instance start) used to fail
+  // every nightly run until an admin clicked "Run checks now", so the
+  // heartbeat went silent and the monitor said "down" daily for a site that
+  // was fine. It is still returned in summary.canaryFailureAt for System
+  // health; the proposed 0073 change lets a healthy maintenance run clear it.
+  return { demo: false, ok: canary.status === "healthy" && invariants.status === "healthy" && schemaHealthy(schema) && summary !== null, canary, invariants, schema, summary };
 }

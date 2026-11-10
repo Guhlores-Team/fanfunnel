@@ -13,7 +13,7 @@ const B64URL = /^[A-Za-z0-9_-]+$/;
 
 const isHttpsOrigin = (v: string) => { try { const u = new URL(v); return u.protocol === "https:" && u.pathname === "/" && !u.search && !u.hash; } catch { return false; } };
 const isSupabaseKey = (v: string, prefix: "sb_publishable_" | "sb_secret_") => JWT.test(v) || (v.startsWith(prefix) && /^[A-Za-z0-9_-]{20,}$/.test(v));
-const isBase64Key32 = (v: string) => { try { return /^[A-Za-z0-9+/=]+$/.test(v) && Buffer.from(v, "base64").length === 32; } catch { return false; } };
+const isBase64Key32 = (v: string) => { try { const b = Buffer.from(v, "base64"); return /^[A-Za-z0-9+/]+={0,2}$/.test(v) && b.length === 32 && b.toString("base64") === v; } catch { return false; } };
 const isEmailList = (v: string) => { const parts = v.split(",").map((p) => p.trim()).filter(Boolean); return parts.length > 0 && parts.every((p) => EMAIL.test(p)); };
 
 /** Required on Production, with the shape each must have (GO_LIVE_KEYS steps 1-6). */

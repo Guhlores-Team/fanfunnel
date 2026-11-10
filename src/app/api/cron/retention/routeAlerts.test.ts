@@ -37,12 +37,23 @@ mock.module("@/lib/storage/work", {
     processPendingStorageWork: async () => ({ completed: 0, pending: 0, failed: storageFailed, reviewRequired: 0, accountsCompleted: 0, accountsPending: 0 }),
   },
 });
+let pushError: { message: string } | null = null;
 mock.module("@/lib/supabase/server", {
   namedExports: {
     isSupabaseConfigured: () => true,
-    createServiceClient: () => ({ rpc: async () => ({ data: rpcError ? null : {}, error: rpcError }) }),
+    createServiceClient: () => ({
+      rpc: () => { const reply = { data: rpcError ? null : {}, error: rpcError }; return Object.assign(Promise.resolve(reply), { abortSignal: async () => reply }); },
+      from: () => ({ update: () => ({ gte: async () => ({ count: pushError ? null : 0, error: pushError }) }) }),
+    }),
   },
 });
+let heartbeat: "sent" | "failed" | "off" = "off";
+mock.module("@/lib/operations/heartbeat", { namedExports: { pingHeartbeat: async () => heartbeat } });
+const opsCaptured: string[] = [];
+mock.module("@/lib/monitoring/opsAlerts", { namedExports: {
+  reportHeartbeatFailed: () => { opsCaptured.push("heartbeat"); },
+  maintenanceStepFailedMessage: (step: string, how: string) => `Maintenance step ${how === "timed_out" ? "timed out" : "failed"}: ${step} (the rest of the run continued)`,
+} });
 mock.module("@/lib/data", { namedExports: { recordAudit: async () => {} } });
 
 async function main() {
@@ -51,7 +62,7 @@ async function main() {
   const call = (headers: Record<string, string> = {}) => GET(new Request("http://localhost/api/cron/retention", { headers }));
 
   delete process.env.CRON_SECRET;
-  check("no secret → 503", (await call({ authorization: `Bearer ${SECRET}` })).status === 503);
+  check("no secret → 401 (WA-09: indistinguishable from a wrong one)", (await call({ authorization: `Bearer ${SECRET}` })).status === 401);
   check("…and it is recorded loudly", captured.length === 1 && /CRON_SECRET/.test(captured[0].message) && captured[0].source === "server" && captured[0].route === "/api/cron/retention");
   check("the alert never contains a secret value", !captured.some((c) => c.message.includes(SECRET)));
 
@@ -67,9 +78,29 @@ async function main() {
   check("…records nothing", captured.length === 0);
 
   rpcError = { message: "relation does not exist" };
-  check("a failed cleanup → 500", (await call({ authorization: `Bearer ${SECRET}` })).status === 500);
+  let failedRun = await call({ authorization: `Bearer ${SECRET}` });
+  check("a failed cleanup → 500", failedRun.status === 500);
   check("…is alerted with a fixed message", captured.length === 1 && captured[0].message === "Retention cleanup failed: run_retention_cleanup returned an error");
+  let failedBody = await failedRun.json();
+  check("OPS3-10: the run continued past the failed step and still pinged the heartbeat", failedBody.steps[0].status === "failed" && failedBody.steps.length === 6 && failedBody.heartbeat === "off" && failedBody.error === "cleanup_failed");
   rpcError = null;
+
+  // OPS3-10: a step that throws or exceeds its deadline is named, the run continues.
+  captured.length = 0;
+  pushError = { message: "permission denied" };
+  failedRun = await call({ authorization: `Bearer ${SECRET}` });
+  failedBody = await failedRun.json();
+  check("a failed push-resume step → 503, named in a fixed alert, every other step still ran", failedRun.status === 503 && captured.length === 1 && captured[0].message === "Maintenance step failed: push (the rest of the run continued)" && failedBody.steps.filter((s: { status: string }) => s.status === "ok").length === 5);
+  pushError = null;
+
+  // OPS3-08: a refused heartbeat ping is recorded as its own fixed row.
+  captured.length = 0; opsCaptured.length = 0;
+  heartbeat = "failed";
+  check("a healthy run whose ping was refused is still 200, with the ping failure recorded", (await call({ authorization: `Bearer ${SECRET}` })).status === 200 && opsCaptured.length === 1 && captured.length === 0);
+  heartbeat = "sent";
+  const sentBody = await (await call({ authorization: `Bearer ${SECRET}` })).json();
+  check("…and an accepted ping says sent", sentBody.heartbeat === "sent" && opsCaptured.length === 1);
+  heartbeat = "off";
 
   captured.length = 0;
   storageFailed = 2;
