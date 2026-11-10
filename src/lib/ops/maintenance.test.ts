@@ -9,9 +9,12 @@ const check = (label: string, ok: unknown) => { assert.ok(ok, label); passed++; 
 
 async function main() {
   const m = await import("./maintenance");
-  const PAGES = ["/", "/spin/abc123", "/c/demo", "/share/abc", "/verify/0123456789abcdef01", "/leaderboard/x", "/signup", "/pending", "/agency", "/forgot-password", "/reset-password", "/dashboardish", "/administrator", "/loginx"];
-  const EXEMPT = ["/dashboard", "/dashboard/settings", "/admin", "/admin/x", "/login", "/mfa", "/auth/callback", "/maintenance", "/privacy", "/terms", "/app-icon", "/_next/static/chunks/main.js", "/favicon.ico", "/sw.js", "/robots.txt", "/manifest.webmanifest", "/logo.png", "/.well-known/security.txt", "/api/admin/audit", "/api/admin/lookup", "/api/admin", "/api/health", "/api/maintenance"];
-  const API = ["/api/spin", "/api/fan/reward", "/api/campaigns/stats", "/api/healthz", "/api/administrator", "/api/errors", "/api/push/subscribe"];
+  // OPS3-04: /pending, /agency, the password pages, /verify and /api/cron/*
+  // stay reachable while paused (an invited creator finishes set-up, a fan's
+  // proof link works, the nightly job and its heartbeat still run).
+  const PAGES = ["/", "/spin/abc123", "/c/demo", "/share/abc", "/leaderboard/x", "/signup", "/dashboardish", "/administrator", "/loginx", "/pendingx", "/verifyx", "/agencies"];
+  const EXEMPT = ["/dashboard", "/dashboard/settings", "/admin", "/admin/x", "/agency", "/login", "/mfa", "/auth/callback", "/pending", "/forgot-password", "/reset-password", "/set-password", "/verify/0123456789abcdef01", "/maintenance", "/privacy", "/terms", "/app-icon", "/_next/static/chunks/main.js", "/favicon.ico", "/sw.js", "/robots.txt", "/manifest.webmanifest", "/logo.png", "/.well-known/security.txt", "/api/admin/audit", "/api/admin/lookup", "/api/admin", "/api/health", "/api/maintenance", "/api/cron/retention"];
+  const API = ["/api/spin", "/api/fan/reward", "/api/campaigns/stats", "/api/healthz", "/api/administrator", "/api/errors", "/api/push/subscribe", "/api/cronx"];
   for (const p of PAGES) check(`${p} → maintenance page`, m.maintenanceRoute(p) === "page");
   for (const p of EXEMPT) check(`${p} stays reachable`, m.maintenanceRoute(p) === "exempt");
   for (const p of API) check(`${p} is paused API`, m.maintenanceRoute(p) === "api");

@@ -25,7 +25,9 @@ async function main() {
   } finally { console.warn = warn; }
   check("timeout is 3 s", HEARTBEAT_TIMEOUT_MS === 3000);
   const route = readFileSync("src/app/api/cron/retention/route.ts", "utf8");
-  check("the cron pings only after a run that did not fail", /if \(status < 500\) await pingHeartbeat\(\);/.test(route) && route.indexOf("pingHeartbeat()") > route.indexOf("const status ="));
+  // OPS3-10: the ping means "the job ran to the end"; a failed step is alerted
+  // by name, and the ping still goes out after every step (never before).
+  check("the cron pings after every step, unconditionally, and records a refused ping", /const heartbeat = await pingHeartbeat\(\);\s*if \(heartbeat === "failed"\) reportHeartbeatFailed\(\);/.test(route) && route.indexOf("await pingHeartbeat()") > route.indexOf("const status =") && route.indexOf("await pingHeartbeat()") > route.lastIndexOf("runStep("));
   console.log(`heartbeat: ${passed} checks passed`);
 }
 main().catch((e) => { console.error(e); process.exitCode = 1; });

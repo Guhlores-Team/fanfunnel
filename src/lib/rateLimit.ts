@@ -84,12 +84,15 @@ export function rateLimit(
 
 // Upstash's own names, or the KV_REST_API_* names Vercel's Upstash integration
 // injects. Taken as a pair so a URL is never sent with the other store's token.
-function upstashEnv(e: Record<string, string | undefined> = process.env): { url: string; token: string } | null {
+// RS-08: a URL pasted with a trailing slash would build `//pipeline` and fall
+// back forever; strip it.
+const trimUrl = (url: string) => url.trim().replace(/\/+$/, "");
+export function upstashEnv(e: Record<string, string | undefined> = process.env): { url: string; token: string } | null {
   if (e.UPSTASH_REDIS_REST_URL && e.UPSTASH_REDIS_REST_TOKEN) {
-    return { url: e.UPSTASH_REDIS_REST_URL, token: e.UPSTASH_REDIS_REST_TOKEN };
+    return { url: trimUrl(e.UPSTASH_REDIS_REST_URL), token: e.UPSTASH_REDIS_REST_TOKEN };
   }
   if (e.KV_REST_API_URL && e.KV_REST_API_TOKEN) {
-    return { url: e.KV_REST_API_URL, token: e.KV_REST_API_TOKEN };
+    return { url: trimUrl(e.KV_REST_API_URL), token: e.KV_REST_API_TOKEN };
   }
   return null;
 }
@@ -125,12 +128,30 @@ export const RATE_LIMIT_STORE_TIMEOUT_MS = 800;
 /** At most one alertable capture per instance per window while the store fails. */
 export const RATE_LIMIT_FALLBACK_ALERT_WINDOW_MS = 60 * 60 * 1000;
 
-const fallbackState = globalThis as unknown as { __ffRateLimitFallbackAt?: number };
+/**
+ * RS-06: after a store failure this instance skips the store for this long
+ * (every request paid the full timeout for the whole outage before), then
+ * tries once more; a success ends the cooldown, a failure starts another.
+ */
+export const RATE_LIMIT_STORE_COOLDOWN_MS = 30_000;
+
+const fallbackState = globalThis as unknown as { __ffRateLimitFallbackAt?: number; __ffRateLimitSkipUntil?: number };
 
 /** When this instance last fell back from the shared store (ISO), or null. Shown in System health. */
 export function rateLimitStoreLastFallbackAt(): string | null {
   const at = fallbackState.__ffRateLimitFallbackAt;
   return typeof at === "number" ? new Date(at).toISOString() : null;
+}
+
+/** Milliseconds until this instance tries the shared store again, or 0. */
+export function rateLimitStoreSkipFor(now = Date.now()): number {
+  const until = fallbackState.__ffRateLimitSkipUntil;
+  return typeof until === "number" && until > now ? until - now : 0;
+}
+
+/** Test seam: end the cooldown. */
+export function resetRateLimitStoreCooldown(): void {
+  delete fallbackState.__ffRateLimitSkipUntil;
 }
 
 /**
@@ -143,9 +164,30 @@ export const fallbackReporter = {
 };
 
 function noteStoreFallback(): void {
-  fallbackState.__ffRateLimitFallbackAt = Date.now();
+  const now = Date.now();
+  fallbackState.__ffRateLimitFallbackAt = now;
+  fallbackState.__ffRateLimitSkipUntil = now + RATE_LIMIT_STORE_COOLDOWN_MS;
   if (!rateLimit("ops-alert:rate-limit-fallback", 1, RATE_LIMIT_FALLBACK_ALERT_WINDOW_MS).ok) return;
   void fallbackReporter.report().catch(() => undefined);
+}
+
+async function pipeline(env: { url: string; token: string }, commands: string[][]): Promise<{ result?: unknown; error?: unknown }[]> {
+  const res = await fetch(`${env.url}/pipeline`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(commands),
+    cache: "no-store",
+    signal: AbortSignal.timeout(RATE_LIMIT_STORE_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`upstash ${res.status}`);
+  const out = (await res.json()) as { result?: unknown; error?: unknown }[];
+  if (!Array.isArray(out) || out.length !== commands.length || out.some((entry) => !entry || entry.error)) {
+    throw new Error("invalid rate limit pipeline");
+  }
+  return out;
 }
 
 async function rateLimitUpstash(
@@ -156,25 +198,11 @@ async function rateLimitUpstash(
 ): Promise<{ ok: boolean; retryAfter: number }> {
   // One round-trip pipeline: increment this window's counter, arm its expiry only
   // if it has none (NX), and read the remaining TTL for the Retry-After header.
-  const res = await fetch(`${env.url}/pipeline`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify([
-      ["INCR", key],
-      ["PEXPIRE", key, String(windowMs), "NX"],
-      ["PTTL", key],
-    ]),
-    cache: "no-store",
-    signal: AbortSignal.timeout(RATE_LIMIT_STORE_TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`upstash ${res.status}`);
-  const out = (await res.json()) as { result?: unknown; error?: unknown }[];
-  if (!Array.isArray(out) || out.length !== 3 || out.some((entry) => !entry || entry.error)) {
-    throw new Error("invalid rate limit pipeline");
-  }
+  const out = await pipeline(env, [
+    ["INCR", key],
+    ["PEXPIRE", key, String(windowMs), "NX"],
+    ["PTTL", key],
+  ]);
   const count = Number(out[0]?.result);
   const pttl = Number(out[2]?.result);
   if (!Number.isSafeInteger(count) || count < 1 || !Number.isFinite(pttl)) {
@@ -195,11 +223,12 @@ export async function rateLimitShared(
   windowMs: number,
 ): Promise<{ ok: boolean; retryAfter: number }> {
   const env = upstashEnv();
-  if (env) {
+  if (env && rateLimitStoreSkipFor() === 0) {
     try {
       return await rateLimitUpstash(env, storeKey(key), limit, windowMs);
     } catch {
-      // fall through to the in-memory limiter below, visibly (OPS-10)
+      // fall through to the in-memory limiter below, visibly (OPS-10), and
+      // skip the store for RATE_LIMIT_STORE_COOLDOWN_MS (RS-06)
       noteStoreFallback();
     }
   }

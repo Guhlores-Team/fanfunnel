@@ -44,10 +44,11 @@ export type RetentionKey = keyof typeof RETENTION_DAYS;
 
 /**
  * T13 (COPY_FIXES 12): the Privacy Policy's period for a declined creator
- * access request. Not part of RETENTION_DAYS because run_retention_cleanup
- * does not enforce it yet (that needs SQL); docs/DATA_RETENTION.md lists it
- * under "Promised, not yet automated". The applicant can delete the request
- * and account themselves from /pending meanwhile.
+ * access request. run_retention_cleanup (0073) deletes the request after
+ * this many days (its `v_declined_application_days` mirrors it) and returns
+ * the applicants, whose accounts the cron then deletes
+ * (src/lib/account/declinedApplicants.ts). The applicant can delete the
+ * request and account themselves from /pending at any time.
  */
 export const DECLINED_ACCESS_REQUEST_DAYS = 90;
 

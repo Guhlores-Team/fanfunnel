@@ -69,8 +69,9 @@ async function main() {
   // Static: the fan read has exactly one fan_passes select and no fallback.
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(new URL("./spins.ts", import.meta.url), "utf8");
-  const fn = src.slice(src.indexOf("export async function getFanPass("), src.indexOf("export async function spin("));
-  check("getFanPass reads fan_passes exactly once and never mentions a legacy/pre-0020 fallback", (fn.match(/\.from\("fan_passes"\)/g) ?? []).length === 1 && !/legacy|pre-0020|pre-0022|hasPerPass/.test(fn));
+  const fn = src.slice(src.indexOf("const fanReadClient"), src.indexOf("export async function spin("));
+  check("the fan page path reads fan_passes exactly once (readFanPassRow) and never mentions a legacy/pre-0020 fallback", (fn.match(/\.from\("fan_passes"\)/g) ?? []).length === 1 && !/legacy|pre-0020|pre-0022|hasPerPass/.test(fn));
+  check("OPS3-02: the read is bounded (timed client + page deadline)", /createServiceClient\(\{ timeoutMs: FAN_READ_TIMEOUT_MS \}\)/.test(fn) && /withFanDeadline\(readFanPassView\(token\), FAN_PAGE_DEADLINE_MS/.test(fn));
   check("the balance shown is the per-pass one, never the fan aggregate", /spinsRemaining: pass\.spins_remaining/.test(fn) && !/pass\.fan\.spins_remaining,\n/.test(fn.slice(fn.indexOf("spinsRemaining:"), fn.indexOf("spinsRemaining:") + 80)));
 
   console.log(`fanPassUnavailable.test: ${passed} checks passed`);

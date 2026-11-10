@@ -14,8 +14,7 @@ import {
   mockGetNotificationSources,
   mockGetOverview,
   mockSendFanMessage,
-  mockSpin,
-} from "./mock";
+  mockSpin, mockSetRedemptionStatus } from "./mock";
 import { buildNotificationFeed } from "./notificationFeed";
 import { LEGAL } from "@/lib/legal";
 
@@ -45,8 +44,14 @@ async function main() {
   check("A's own token is masked", !text.includes(a.token));
 
   const before = mockGetOverview().metrics.spinsPlayed;
+  // ATK-01 (widened) parity: A's win is still a pending prize, so A cannot be erased yet.
+  const owed = await mockDeleteFanData(a.token);
+  check("demo: a fan owed a prize is not deleted (prize_owed)", "error" in owed && owed.error === "prize_owed" && mockExportFanData(a.token) !== null);
+  const alicePrize = mockGetOverview().redemptions.find((r) => r.fanName === "Privacy Alice");
+  check("demo: the pending prize is in the queue", !!alicePrize);
+  mockSetRedemptionStatus(alicePrize!.id, "fulfilled");
   const del = await mockDeleteFanData(a.token);
-  check("delete ok", "ok" in del && del.spinsKept === 1);
+  check("delete ok once the prize is settled", "ok" in del && del.spinsKept === 1);
   check("A's export is gone", mockExportFanData(a.token) === null);
   check("B is untouched", mockExportFanData(b.token)?.profile.displayName === "Privacy Bob");
   check("B's chat and wishlist are untouched", JSON.stringify(mockExportFanData(b.token)).includes("message from bob") && mockExportFanData(b.token)!.wishlist.length === 1);

@@ -5,16 +5,21 @@ import { createClient, createServiceClient, isSupabaseConfigured } from "@/lib/s
 import { initializeCanaryForAdmin, readCanary } from "@/lib/operations/canary";
 import { readHealthSummary, readSchemaVersion, reportOperationalFailure, runOperationalChecks } from "@/lib/operations/runtime";
 import { readCappedText } from "@/lib/monitoring/report";
-import { rateLimitOr429 } from "@/lib/api/limit";
+import { limitRoute, rateLimitOr429 } from "@/lib/api/limit";
 import { recordAudit } from "@/lib/data/audit";
 import { NO_STORE_HEADERS } from "@/lib/privacy/respond";
 import { hasSharedRateLimitStore } from "@/lib/rateLimit";
-import { lastRateLimitFallbackAt, maintenanceStatus, operationalFlags } from "@/lib/operations/opsStatus";
+import { lastAlertMailAcceptedAt, lastRateLimitFallbackAt, maintenanceStatus, operationalFlags, readHeartbeatStatus } from "@/lib/operations/opsStatus";
 import { reportMaintenanceStale } from "@/lib/monitoring/opsAlerts";
 import { currentEnvironment } from "@/lib/monitoring/config";
 
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: NO_STORE_HEADERS });
-export async function GET() {
+// RS-05: "Run checks now" runs the same checks as the daily job.
+export const maxDuration = 300;
+export async function GET(req: Request) {
+  // RS-11: per-client cap (and the fast 401 without a session cookie) before the auth round trip.
+  const capped = await limitRoute(req, "admin/system-health:GET");
+  if (capped) return capped;
   const admin = await requireAdminRoute();
   if (!admin.ok) admin.response.headers.set("Cache-Control", "no-store");
   if (!admin.ok) return admin.response;
@@ -30,12 +35,16 @@ export async function GET() {
   let svc: ReturnType<typeof createServiceClient>;
   try { svc = createServiceClient(); }
   catch { return json({ demo: false, canary: { status: "unavailable" }, summary: null }, 503); }
-  const [canary, summary, schema, fallbackAt] = await Promise.all([readCanary(svc), readHealthSummary(svc), readSchemaVersion(svc), lastRateLimitFallbackAt(svc, environment)]);
+  const [canary, summary, schema, fallbackAt, alertMailAcceptedAt] = await Promise.all([readCanary(svc), readHealthSummary(svc), readSchemaVersion(svc), lastRateLimitFallbackAt(svc, environment), lastAlertMailAcceptedAt(svc)]);
   const status = ops(summary?.lastMaintenanceAt, fallbackAt);
   if (status.maintenance.stale) reportMaintenanceStale();
-  return json({ demo: false, canary, summary, schema, rateLimitStore: hasSharedRateLimitStore() ? "shared" : "per_instance", ...status });
+  // OPS3-08: what the heartbeat and the alert mail actually did, not just "configured".
+  const heartbeat = await readHeartbeatStatus(svc, summary?.lastMaintenanceAt, process.env, environment);
+  return json({ demo: false, canary, summary, schema, rateLimitStore: hasSharedRateLimitStore() ? "shared" : "per_instance", ...status, heartbeat, alertMail: { lastAcceptedAt: alertMailAcceptedAt } });
 }
 export async function POST(req: Request) {
+  const capped = await limitRoute(req, "admin/system-health:POST");
+  if (capped) return capped;
   const admin = await requireAdminRoute();
   if (!admin.ok) admin.response.headers.set("Cache-Control", "no-store");
   if (!admin.ok) return admin.response;
