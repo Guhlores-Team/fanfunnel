@@ -74,7 +74,19 @@ async function main() {
   // --- The app route serves the policy for this build's VERCEL_ENV --------
   const before = process.env.VERCEL_ENV;
   process.env.VERCEL_ENV = "production";
-  check("robots.ts serves the Production policy on Production", resolveRobots(robots()) === prod);
+  const beforeSite = process.env.NEXT_PUBLIC_SITE_URL;
+  process.env.NEXT_PUBLIC_SITE_URL = "https://fanfunnel.example";
+  const prodWithSitemap = resolveRobots(robotsPolicy("production", "https://fanfunnel.example"));
+  check("robots.ts serves the Production policy on Production, with the sitemap on the site's own address", resolveRobots(robots()) === prodWithSitemap && /Sitemap: https:\/\/fanfunnel\.example\/sitemap\.xml/.test(prodWithSitemap));
+  check("the sitemap line changes nothing a crawler may fetch", ["/", "/terms", "/spin/t", "/dashboard"].every((p) => allowed(prodWithSitemap, "Googlebot", p) === allowed(prod, "Googlebot", p)));
+  const { default: sitemap } = await import("../../app/sitemap");
+  const urls = sitemap().map((e) => e.url).sort();
+  check("the Production sitemap lists the home page, Terms and Privacy on the site's own address, and nothing private", JSON.stringify(urls) === JSON.stringify(["https://fanfunnel.example", "https://fanfunnel.example/privacy", "https://fanfunnel.example/terms"]));
+  process.env.VERCEL_ENV = "preview";
+  check("a Preview sitemap is empty", sitemap().length === 0);
+  process.env.VERCEL_ENV = "production";
+  if (beforeSite === undefined) delete process.env.NEXT_PUBLIC_SITE_URL;
+  else process.env.NEXT_PUBLIC_SITE_URL = beforeSite;
   process.env.VERCEL_ENV = "preview";
   check("robots.ts disallows everything on a Preview", !allowed(resolveRobots(robots()), "Googlebot", "/"));
   if (before === undefined) delete process.env.VERCEL_ENV;

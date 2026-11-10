@@ -5,6 +5,7 @@ import DebugConsole from "@/components/debug/DebugConsole";
 import DebugErrorBoundary from "@/components/debug/DebugErrorBoundary";
 import CrashCanary from "@/components/debug/CrashCanary";
 import EnvBadge from "@/components/debug/EnvBadge";
+import { siteOrigin } from "@/lib/account/accountMail";
 
 // Display face with real character (not Inter, not Space Grotesk) for headlines;
 // Geist for clean body; Geist Mono powers tabular figures in metrics.
@@ -16,7 +17,12 @@ const display = Bricolage_Grotesque({
 const sans = Geist({ variable: "--ff-sans", subsets: ["latin"] });
 const mono = Geist_Mono({ variable: "--ff-mono", subsets: ["latin"] });
 
+// Absolute links in page metadata (link previews, canonical) use the site's
+// own address: NEXT_PUBLIC_SITE_URL, else Vercel's production or deployment URL.
+const origin = siteOrigin();
+
 export const metadata: Metadata = {
+  ...(origin ? { metadataBase: new URL(origin) } : {}),
   title: "FanFunnel — Creator Prize Games",
   description:
     "Send each fan a personal prize game: a wheel, scratch tickets or bingo. Every play wins; rare drops keep them coming back.",

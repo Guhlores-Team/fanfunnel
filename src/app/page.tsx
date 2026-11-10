@@ -1,8 +1,22 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { brandVars } from "@/lib/theme";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import Wheel from "@/components/Wheel";
+
+const TITLE = "FanFunnel — Creator Prize Games";
+const DESCRIPTION = "Send each fan a personal prize game: a wheel, scratch tickets or bingo. Every play wins; rare drops keep them coming back.";
+
+// How the home page looks when its address is shared (the address comes from
+// metadataBase in the root layout, i.e. NEXT_PUBLIC_SITE_URL on Production).
+export const metadata: Metadata = {
+  title: TITLE,
+  description: DESCRIPTION,
+  alternates: { canonical: "/" },
+  openGraph: { type: "website", siteName: "FanFunnel", title: TITLE, description: DESCRIPTION, url: "/" },
+  twitter: { card: "summary", title: TITLE, description: DESCRIPTION },
+};
 
 // Landing sells FanFunnel to creators (fans never see this; they get direct
 // links). Brand register: expressive, display type, brand glow.
@@ -42,12 +56,30 @@ export default function Home() {
           </p>
 
           <div className="reveal mt-9 flex flex-wrap items-center gap-3" style={{ animationDelay: "0.28s" }}>
-            <Link
-              href="/dashboard"
-              className="btn-brand rounded-xl px-6 py-3 text-base font-bold"
-            >
-              {live ? "Open your dashboard" : "Open the dashboard"}
-            </Link>
+            {live ? (
+              <>
+                <Link
+                  href="/signup"
+                  data-testid="home-request-access"
+                  className="btn-brand rounded-xl px-6 py-3 text-base font-bold"
+                >
+                  Request creator access
+                </Link>
+                <Link
+                  href="/dashboard"
+                  className="rounded-xl border border-line px-6 py-3 text-base font-semibold text-ink transition hover:bg-surface"
+                >
+                  Open your dashboard
+                </Link>
+              </>
+            ) : (
+              <Link
+                href="/dashboard"
+                className="btn-brand rounded-xl px-6 py-3 text-base font-bold"
+              >
+                Open the dashboard
+              </Link>
+            )}
             {!live && (
               <Link
                 href="/spin/demo"
