@@ -4,7 +4,7 @@ import { fixtureCreatorRpc } from "../scripts/security/actor-context-fixture.mjs
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 export const TEST_PROJECT = "snmcrmhgevfqggxdiomu";
-export const FIXTURE_TERMS_VERSION = "2026-10-27";
+export const FIXTURE_TERMS_VERSION = "2026-11-11";
 export function requireTestProject(url) {
   const parsed = new URL(url);
   if (parsed.protocol !== "https:" || parsed.hostname !== `${TEST_PROJECT}.supabase.co` || parsed.username || parsed.password || parsed.port) {

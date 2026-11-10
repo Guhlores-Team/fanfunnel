@@ -36,6 +36,12 @@ skips it and reports `app_errors: null`; nothing fails.
 | --- | --- | --- |
 | Declined creator access requests (`creator_applications` and the applicant's account) | **90 days** after the request is declined (`DECLINED_ACCESS_REQUEST_DAYS` in `src/lib/privacy/retention.ts`) | The Privacy Policy states this period. `run_retention_cleanup` does not delete them yet: that needs a migration (owned by the DB branch). Until then an admin deletes them by hand, and the applicant can delete the request and account themselves from `/pending` ("Delete my request and account"). |
 
+### Undefined: chat messages (TS-19)
+
+| Record | Table | Kept for | Status |
+| --- | --- | --- | --- |
+| Chat messages between a fan and a creator | `messages` | **no period**: for as long as the creator account and the fan record exist | Deleted with the fan (creator deletes the fan, the fan deletes their own data) or with the account. No age-based rule exists; lawyer question 32 asks whether one is needed (a 12-month-after-last-message rule would be a `run_retention_cleanup` period plus a Privacy Policy line). |
+
 ### Nothing else to clean up
 
 - **Password-reset links** are issued and expired by Supabase Auth itself

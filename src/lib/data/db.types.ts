@@ -602,6 +602,7 @@ export type Database = {
           audience_size: string | null
           created_at: string
           decided_at: string | null
+          decision_reason: string | null
           display_name: string | null
           email: string | null
           id: string
@@ -614,6 +615,7 @@ export type Database = {
           audience_size?: string | null
           created_at?: string
           decided_at?: string | null
+          decision_reason?: string | null
           display_name?: string | null
           email?: string | null
           id?: string
@@ -626,6 +628,7 @@ export type Database = {
           audience_size?: string | null
           created_at?: string
           decided_at?: string | null
+          decision_reason?: string | null
           display_name?: string | null
           email?: string | null
           id?: string
@@ -1097,6 +1100,51 @@ export type Database = {
           },
         ]
       }
+      fan_consent_evidence: {
+        Row: {
+          ack_count: number
+          acked_at: string
+          creator_id: string
+          fan_id: string
+          ip_hash: string | null
+          terms_version: string
+          ua_hash: string | null
+        }
+        Insert: {
+          ack_count?: number
+          acked_at?: string
+          creator_id: string
+          fan_id: string
+          ip_hash?: string | null
+          terms_version: string
+          ua_hash?: string | null
+        }
+        Update: {
+          ack_count?: number
+          acked_at?: string
+          creator_id?: string
+          fan_id?: string
+          ip_hash?: string | null
+          terms_version?: string
+          ua_hash?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fan_consent_evidence_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fan_consent_evidence_fan_id_fkey"
+            columns: ["fan_id"]
+            isOneToOne: true
+            referencedRelation: "fans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       fan_focus: {
         Row: {
           chase_counter: number
@@ -1338,6 +1386,7 @@ export type Database = {
           campaign_id: string | null
           created_at: string
           creator_id: string
+          expires_at: string | null
           fan_id: string
           id: string
           is_active: boolean
@@ -1356,6 +1405,7 @@ export type Database = {
           campaign_id?: string | null
           created_at?: string
           creator_id: string
+          expires_at?: string | null
           fan_id: string
           id?: string
           is_active?: boolean
@@ -1374,6 +1424,7 @@ export type Database = {
           campaign_id?: string | null
           created_at?: string
           creator_id?: string
+          expires_at?: string | null
           fan_id?: string
           id?: string
           is_active?: boolean
@@ -1678,6 +1729,38 @@ export type Database = {
           },
         ]
       }
+      legal_terms_notice: {
+        Row: {
+          announced_at: string | null
+          announced_by: string | null
+          effective_at: string | null
+          singleton: boolean
+          upcoming_version: string | null
+        }
+        Insert: {
+          announced_at?: string | null
+          announced_by?: string | null
+          effective_at?: string | null
+          singleton?: boolean
+          upcoming_version?: string | null
+        }
+        Update: {
+          announced_at?: string | null
+          announced_by?: string | null
+          effective_at?: string | null
+          singleton?: boolean
+          upcoming_version?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_terms_notice_announced_by_fkey"
+            columns: ["announced_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       link_tombstones: {
         Row: {
           created_at: string
@@ -1698,6 +1781,7 @@ export type Database = {
       }
       messages: {
         Row: {
+          actor_id: string | null
           body: string
           created_at: string
           creator_id: string
@@ -1707,6 +1791,7 @@ export type Database = {
           sender: Database["public"]["Enums"]["message_sender"]
         }
         Insert: {
+          actor_id?: string | null
           body: string
           created_at?: string
           creator_id: string
@@ -1716,6 +1801,7 @@ export type Database = {
           sender: Database["public"]["Enums"]["message_sender"]
         }
         Update: {
+          actor_id?: string | null
           body?: string
           created_at?: string
           creator_id?: string
@@ -1725,6 +1811,13 @@ export type Database = {
           sender?: Database["public"]["Enums"]["message_sender"]
         }
         Relationships: [
+          {
+            foreignKeyName: "messages_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "messages_creator_id_fkey"
             columns: ["creator_id"]
@@ -2274,6 +2367,7 @@ export type Database = {
       }
       redemptions: {
         Row: {
+          actor_id: string | null
           cost_cents_at_award: number | null
           created_at: string
           creator_id: string
@@ -2286,6 +2380,7 @@ export type Database = {
           stock_unit: string | null
         }
         Insert: {
+          actor_id?: string | null
           cost_cents_at_award?: number | null
           created_at?: string
           creator_id: string
@@ -2298,6 +2393,7 @@ export type Database = {
           stock_unit?: string | null
         }
         Update: {
+          actor_id?: string | null
           cost_cents_at_award?: number | null
           created_at?: string
           creator_id?: string
@@ -2310,6 +2406,13 @@ export type Database = {
           stock_unit?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "redemptions_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "redemptions_creator_id_fkey"
             columns: ["creator_id"]
@@ -3205,15 +3308,6 @@ export type Database = {
             Args: { p_creator: string; p_fan: string; p_focus: string }
             Returns: Json
           }
-        | {
-            Args: {
-              p_actor: string
-              p_creator: string
-              p_fan: string
-              p_focus: string
-            }
-            Returns: Json
-          }
       cancel_spin_attempt: {
         Args: {
           p_attempt: string
@@ -3227,7 +3321,6 @@ export type Database = {
         Args: { p_error_id?: string; p_limit: number }
         Returns: Json
       }
-      claim_spin: { Args: { p_token: string }; Returns: number }
       commit_spin_attempt: {
         Args: {
           p_attempt: string
@@ -3278,6 +3371,42 @@ export type Database = {
             }
             Returns: Json
           }
+      creator_analytics_summary: {
+        Args: { p_creator?: string; p_days?: number }
+        Returns: Json
+      }
+      creator_fan_summaries: {
+        Args: {
+          p_before_created?: string
+          p_before_id?: string
+          p_creator?: string
+          p_limit?: number
+          p_query?: string
+        }
+        Returns: {
+          active_links: number
+          blocked_at: string | null
+          break_until: string | null
+          campaign_names: string[] | null
+          created_at: string
+          display_name: string | null
+          fan_id: string
+          grant_count: number
+          handle: string | null
+          last_visit_day: string | null
+          last_win_at: string | null
+          last_win_label: string | null
+          last_win_rarity: Database["public"]["Enums"]["prize_rarity"] | null
+          links: number
+          self_excluded: boolean
+          spins_granted_total: number
+          spins_remaining: number
+          tags: string[] | null
+          total_fans: number
+          total_spent_cents: number
+          wins: number
+        }[]
+      }
       creator_inbox_threads: {
         Args: {
           p_before_at?: string
@@ -3312,11 +3441,13 @@ export type Database = {
           token: string
         }[]
       }
+      creator_obligations: { Args: { p_creator?: string }; Returns: Json }
       creator_redemption_queue: {
         Args: {
           p_before_at?: string
           p_before_id?: string
           p_creator?: string
+          p_fan?: string
           p_limit?: number
           p_query?: string
           p_status?: string
@@ -3326,6 +3457,7 @@ export type Database = {
           due_at: string
           fair_trace: Json
           fan_name: string
+          fan_id: string | null
           id: string
           notes: string
           pool_snapshot: Json
@@ -3411,10 +3543,6 @@ export type Database = {
         Returns: Json
       }
       creator_storage_work_claim: { Args: { p_limit?: number }; Returns: Json }
-      credit_pass_spins: {
-        Args: { p_fan_id: string; p_spins: number }
-        Returns: undefined
-      }
       current_user_active: { Args: never; Returns: boolean }
       delete_campaign: {
         Args: { p_campaign: string; p_creator: string }
@@ -3447,16 +3575,6 @@ export type Database = {
             }
             Returns: Json
           }
-        | {
-            Args: {
-              p_actor: string
-              p_creator: string
-              p_grant: string
-              p_patch: Json
-              p_request: string
-            }
-            Returns: Json
-          }
       ensure_pass_commitment: { Args: { p_token: string }; Returns: Json }
       fan_take_break: {
         Args: { p_token: string; p_until: string }
@@ -3477,18 +3595,6 @@ export type Database = {
             Args: {
               p_actor?: string
               p_context: string
-              p_creator: string
-              p_fan: string
-              p_pack: string
-              p_pass: string
-              p_prize: string
-              p_request: string
-            }
-            Returns: Json
-          }
-        | {
-            Args: {
-              p_actor?: string
               p_creator: string
               p_fan: string
               p_pack: string
@@ -3528,18 +3634,7 @@ export type Database = {
             }
             Returns: Json
           }
-      import_fans: { Args: { p_rows: Json }; Returns: undefined }
       import_fans_durable:
-        | {
-            Args: {
-              p_actor?: string
-              p_batch: string
-              p_creator: string
-              p_request_hash: string
-              p_rows: Json
-            }
-            Returns: Json
-          }
         | {
             Args: {
               p_actor?: string
@@ -3565,12 +3660,14 @@ export type Database = {
         Args: { p_creator: string; p_permission: string }
         Returns: string
       }
+      legal_terms_upcoming: { Args: never; Returns: Json }
       legal_terms_version: { Args: never; Returns: string }
       my_seat_creators: {
-        Args: never
+        Args: { p_limit?: number }
         Returns: {
           can_chat: boolean
           can_fulfil: boolean
+          can_manage: boolean
           creator_id: string
           display_name: string
         }[]
@@ -3641,17 +3738,6 @@ export type Database = {
             }
             Returns: Json
           }
-        | {
-            Args: {
-              p_actor: string
-              p_authorized?: boolean
-              p_cancel?: boolean
-              p_creator: string
-              p_kind: string
-              p_request: string
-            }
-            Returns: Json
-          }
       record_app_error: {
         Args: {
           p_environment: string
@@ -3663,6 +3749,10 @@ export type Database = {
           p_stack?: string
           p_user_agent?: string
         }
+        Returns: Json
+      }
+      record_fan_ack: {
+        Args: { p_ip_hash?: string; p_token: string; p_ua_hash?: string }
         Returns: Json
       }
       record_fan_reward_view: {
@@ -3705,10 +3795,6 @@ export type Database = {
         Args: { p_after?: string; p_limit?: number }
         Returns: Json
       }
-      rollback_claimed_spin: {
-        Args: { p_prize_id: string; p_token: string }
-        Returns: undefined
-      }
       run_retention_cleanup: {
         Args: {
           p_app_error_days: number
@@ -3730,7 +3816,9 @@ export type Database = {
               p_config: Json
               p_context: string
               p_creator: string
+              p_expected_updated_at?: string
               p_prizes: Json
+              p_ready?: boolean
               p_wheel: string
             }
             Returns: undefined
@@ -3746,7 +3834,12 @@ export type Database = {
             Returns: undefined
           }
       save_wheel_prizes: {
-        Args: { p_creator: string; p_prizes: Json; p_wheel: string }
+        Args: {
+          p_creator: string
+          p_expected_updated_at?: string
+          p_prizes: Json
+          p_wheel: string
+        }
         Returns: undefined
       }
       schema_version: { Args: never; Returns: number }
@@ -3775,6 +3868,10 @@ export type Database = {
       set_leaderboard_enabled: {
         Args: { p_enabled: boolean }
         Returns: undefined
+      }
+      set_legal_terms_notice: {
+        Args: { p_effective_at: string; p_version: string }
+        Returns: Json
       }
       set_notification_prefs: {
         Args: {

@@ -26,7 +26,7 @@ export async function probeBingoGames(sqlInput){
  const publish=async(id,rows,line,actor=owner)=>rpc("save_game_wheel",[q(id),q(owner),j(rows),j({game_kind:"bingo",game_config:{size:3,linePrizeId:line},title:"Published Bingo"}),q(actor)]);
  const addFan=async(id=wheel,credit=100)=>{
   const out=await rpc("create_pass_grant",[q(randomUUID()),q(owner),"null",q(id),q("Bingo fixture"),String(credit),"0","100","null"]);check(out.status==="granted","fixture paid fan uses the durable bootstrap");
-  await sql(`update public.fans set acked_at=now(),acked_terms_version='2026-10-27' where id=${q(out.fanId)};`);return{fan:out.fanId,pass:out.passId,token:out.token,wheel:id};
+  await sql(`update public.fans set acked_at=now(),acked_terms_version=public.legal_terms_version() where id=${q(out.fanId)};`);return{fan:out.fanId,pass:out.passId,token:out.token,wheel:id};
  };
  const prep=async(who,id=randomUUID())=>{
   // Simulate a new throttle window between synthetic ordered fixture plays;

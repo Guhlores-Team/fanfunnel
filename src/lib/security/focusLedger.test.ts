@@ -27,7 +27,10 @@ check(source.includes("where status in ('active','paused')"),"one live OR paused
 check(source.includes("where state in('held','consumed')"),"released code can be held again; active/consumed assignment stays unique");
 check(source.includes("and reserved_focus_id is null"),"code free stock excludes concrete holds");
 check(source.includes("context=null,result="),"fan erasure drops unrevealed attempt context");
-check(source.includes(`acked_terms_version is distinct from '${LEGAL.version}'`),"SQL atomic gate matches current legal version");
+// 0059 is history: it holds the literal of its day. The gate it introduced still
+// exists, and its effective definition (0072) reads legal_terms_version(), which
+// legalTermsVersion.test.ts ties to LEGAL.version; a literal in 0059 cannot follow a bump.
+check(source.includes("acked_terms_version is distinct from '")&&/^\d{4}-\d{2}-\d{2}$/.test(LEGAL.version),"SQL atomic gate checks the accepted terms version (current value pinned by legalTermsVersion.test.ts)");
 check(source.includes("before insert or update on public.fans"),"nonzero fan INSERT cannot bypass aggregate gate");
 check(source.includes("before insert or update on public.fan_passes"),"pass direct credit/seed writes gated");
 check(source.includes("aa_atomic_spin_insert before insert on public.spins"),"manual insert cannot bypass durable attempt");

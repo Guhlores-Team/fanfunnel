@@ -3,6 +3,9 @@
   "installCommand": "npm ci",
   "git": {
     "deploymentEnabled": {
+      "**": false,
+      "*": false,
+      "main": true,
       "dashboard-redesign": false,
       "orch/fixes": false,
       "gaps/b3-ui": false,

@@ -461,9 +461,11 @@ async function main() {
       ["reconcile_creator_request",{p_request:randomUUID(),p_creator:B.id,p_actor:B.id,p_kind:"pass",p_cancel:false,p_authorized:false}],
       ["save_game_wheel",{p_wheel:B.wheelId,p_creator:B.id,p_prizes:[],p_config:{},p_actor:B.id}],
       ["rollback_claimed_spin",{p_token:B.token,p_prize_id:B.prizeId}],
-    ])check((await admin.rpc(fn,args)).error?.code==="42501",`service cannot execute the pre-0062 ${fn} signature`);
-    check((await a.rpc("import_fans",{p_rows:[]})).error?.code==="42501","authenticated cannot bypass durable imports through the legacy API");
-    check((await createClient(URL_,ANON,{auth:{persistSession:false}}).rpc("import_fans",{p_rows:[]})).error?.code==="42501","anon cannot bypass durable imports through the legacy API");
+    // 0073 (DB-14) dropped most of these shells: PostgREST then answers
+    // PGRST202 (no such function) instead of 42501; either is a refusal.
+    ])check(["42501","PGRST202"].includes((await admin.rpc(fn,args)).error?.code),`service cannot execute the pre-0062 ${fn} signature`);
+    check(["42501","PGRST202"].includes((await a.rpc("import_fans",{p_rows:[]})).error?.code),"authenticated cannot bypass durable imports through the legacy API");
+    check(["42501","PGRST202"].includes((await createClient(URL_,ANON,{auth:{persistSession:false}}).rpc("import_fans",{p_rows:[]})).error?.code),"anon cannot bypass durable imports through the legacy API");
 
     //0060: feature metadata comes from server-owned profiles. Exercise real
     // table writes so create/duplicate/template/import cannot bypass the gate.
@@ -1353,6 +1355,91 @@ async function main() {
     check(!fanGone.error && fanGone.data?.length === 1, `0072 the creator deletes its fan (${fanGone.error?.message ?? fanGone.data?.length})`);
     const scrubbed = must(await admin.from("redemptions").select("notes, due_at").eq("id", tRedemption.id).single(), "0072 T's award after the fan deletion");
     check(scrubbed.notes === null && scrubbed.due_at === null, `0072 a deleted fan's award keeps no notes or due date (notes ${scrubbed.notes === null ? "null" : "kept"}, due ${scrubbed.due_at === null ? "null" : "kept"})`);
+
+    // 0073 (batch-7 audits): seat-scoped reads, immutable creator_id, prize
+    // edits only through the editors, pinned access requests, owner seats,
+    // reserved names, consent evidence, dashboard summaries, status reads.
+    console.log("\n0073 batch-7 hardening:");
+    // ATK-05: the chatter seat (scoped to A) reads A's chat but not A's queue, grants or attempts.
+    must(await admin.from("messages").insert({ creator_id: A.id, fan_id: A.fanId, sender: "fan", body: `hello ${RUN}` }).select("id").single(), "0073 a message for A");
+    const seatMessages = await s.from("messages").select("id").eq("creator_id", A.id);
+    check(!seatMessages.error && (seatMessages.data?.length ?? 0) >= 1, `0073 a chat seat reads the creator's chat (${seatMessages.error?.message ?? seatMessages.data?.length})`);
+    for (const table of ["redemptions", "grants", "spin_attempts"]) {
+      const r = await s.from(table).select("id").eq("creator_id", A.id);
+      check(!r.error && (r.data?.length ?? 0) === 0, `0073 a chat seat reads no ${table} of the creator (${r.error?.message ?? r.data?.length})`);
+    }
+    for (const table of ["redemptions", "grants"]) {
+      const r = await a.from(table).select("id").eq("creator_id", A.id);
+      check(!r.error && (r.data?.length ?? 0) >= 1, `0073 the creator still reads its own ${table} (${r.error?.message ?? r.data?.length})`);
+    }
+    // DB-01: creator_id is immutable, even for a session the write policy admits.
+    const moved = await a.from("fans").update({ creator_id: B.id }).eq("id", A.fanId).select("id");
+    check(moved.error?.code === "42501" && /immutable/.test(moved.error?.message ?? ""), `0073 a creator cannot move its fan to another creator (${code(moved)} ${moved.error?.message ?? ""})`);
+    const stillA = must(await admin.from("fans").select("creator_id").eq("id", A.fanId).single(), "0073 A's fan after the refused move");
+    check(stillA.creator_id === A.id, "0073 the fan stays with its creator");
+    // DB-05 / DB-09: no direct prize UPDATE/DELETE, no safety-report DELETE by a session.
+    const prizeEdit = await a.from("prizes").update({ label: "HACKED" }).eq("id", A.prizeId).select("id");
+    check(prizeEdit.error?.code === "42501", `0073 a creator cannot UPDATE a prize directly (${code(prizeEdit)})`);
+    const prizeDelete = await a.from("prizes").delete().eq("id", A.prizeId).select("id");
+    check(prizeDelete.error?.code === "42501", `0073 a creator cannot DELETE a prize directly (${code(prizeDelete)})`);
+    const reportDelete = await a.from("creator_reports").delete().eq("creator_id", A.id).select("id");
+    check(reportDelete.error?.code === "42501", `0073 a creator cannot DELETE a safety report (${code(reportDelete)})`);
+    // DB-02 / ATK N-C: an access request is pinned to its applicant, one per account, never deleted by it.
+    const APP = await makeUser("app73");
+    const app = await signedClient(APP.email);
+    const forgedApp = await app.from("creator_applications").insert({ profile_id: B.id, email: "spoof@example.test", status: "approved", decided_at: new Date().toISOString(), note: "hi" }).select("id").single();
+    check(!forgedApp.error, `0073 an applicant inserts its request (${forgedApp.error?.message ?? "ok"})`);
+    const pinned = must(await admin.from("creator_applications").select("profile_id, email, status, decided_at").eq("profile_id", APP.id).single(), "0073 the applicant's request");
+    check(pinned.email === APP.email && pinned.status === "pending" && pinned.decided_at === null, `0073 the request is pinned to the applicant, pending, undecided (${pinned.email} ${pinned.status} ${pinned.decided_at})`);
+    const second = await app.from("creator_applications").insert({ profile_id: APP.id, note: "again" }).select("id").single();
+    check(second.error?.code === "23505", `0073 a second request by the same account is refused (${code(second)})`);
+    const appDelete = await app.from("creator_applications").delete().eq("profile_id", APP.id).select("id");
+    check(appDelete.error?.code === "42501", `0073 an applicant cannot DELETE its request (${code(appDelete)})`);
+    // TS-03: reserved display names and slugs.
+    const reservedName = await a.rpc("set_display_name", { p_name: "FanFunnel Support" });
+    check(/reserved display name/.test(reservedName.error?.message ?? ""), `0073 a display name impersonating the product is refused (${reservedName.error?.message ?? "accepted"})`);
+    const reservedSlug = await a.rpc("set_public_profile", { p_slug: "admin", p_tip_url: null, p_tagline: null });
+    check(/reserved slug/.test(reservedSlug.error?.message ?? ""), `0073 a reserved slug is refused (${reservedSlug.error?.message ?? "accepted"})`);
+    // WG-02: org_create seats the owner (OWN's org was seeded without one).
+    const ownClient = await signedClient(OWN.email);
+    const created = await ownClient.rpc("org_create", { p_name: "already mine" });
+    check(!created.error && created.data === org.id, `0073 org_create answers the owner's existing agency (${created.error?.message ?? created.data})`);
+    const ownerSeat = await admin.from("org_members").select("role").eq("org_id", org.id).eq("profile_id", OWN.id);
+    check((ownerSeat.data?.length ?? 0) === 1 && ownerSeat.data?.[0]?.role === "owner", `0073 the owner holds the owner seat of its agency (${ownerSeat.error?.message ?? JSON.stringify(ownerSeat.data)})`);
+    const ownerRemoval = await ownClient.rpc("org_remove_member", { p_member: ownerSeat.data?.[0] ? (await admin.from("org_members").select("id").eq("org_id", org.id).eq("profile_id", OWN.id).single()).data?.id : seat.id });
+    check(ownerRemoval.data === "owner_seat", `0073 the owner seat cannot be removed (${ownerRemoval.error?.message ?? ownerRemoval.data})`);
+    // RS-01: an unknown token is not_found, a live link is absent.
+    const noToken = await admin.rpc("get_spin_attempt_status", { p_attempt: randomUUID(), p_token: `no-such-${RUN}`, p_request_hash: "a".repeat(64) });
+    check(noToken.data?.status === "not_found", `0073 a status read for an unknown link is not_found (${noToken.error?.message ?? JSON.stringify(noToken.data)})`);
+    const liveToken = await admin.rpc("get_spin_attempt_status", { p_attempt: randomUUID(), p_token: A.token, p_request_hash: "a".repeat(64) });
+    check(liveToken.data?.status === "absent", `0073 a status read for a live link without that attempt is absent (${liveToken.error?.message ?? JSON.stringify(liveToken.data)})`);
+    // TS-05: consent evidence is service-written and admin-read only.
+    const ack = await admin.rpc("record_fan_ack", { p_token: A.token, p_ip_hash: "b".repeat(64), p_ua_hash: null });
+    check(ack.data?.status === "ok" && ack.data?.version === LEGAL_VERSION, `0073 record_fan_ack stamps the current Terms version (${ack.error?.message ?? JSON.stringify(ack.data)})`);
+    const creatorAck = await a.rpc("record_fan_ack", { p_token: A.token });
+    check(creatorAck.error?.code === "42501", `0073 a creator cannot call record_fan_ack (${deniedCode(creatorAck)})`);
+    const evidence = await a.from("fan_consent_evidence").select("fan_id").eq("fan_id", A.fanId);
+    check(!evidence.error && (evidence.data?.length ?? 0) === 0, `0073 a creator reads no consent evidence (${evidence.error?.message ?? evidence.data?.length})`);
+    const evidenceRow = must(await admin.from("fan_consent_evidence").select("terms_version, ack_count").eq("fan_id", A.fanId).single(), "0073 the evidence row");
+    check(evidenceRow.terms_version === LEGAL_VERSION && evidenceRow.ack_count >= 1, "0073 the evidence row carries the version and a count");
+    // DB-13 / PA-03: the dashboard summaries answer the creator and a view seat, not another tenant.
+    // Service-only (a route checks can_act_for on the session, then passes p_creator); a session cannot call them.
+    const obligations = await admin.rpc("creator_obligations", { p_creator: A.id });
+    check(!obligations.error && typeof obligations.data?.openPrizes === "number" && obligations.data?.activeLinks >= 1, `0073 creator_obligations counts for the creator (${obligations.error?.message ?? JSON.stringify(obligations.data)})`);
+    const summaries = await admin.rpc("creator_fan_summaries", { p_creator: A.id });
+    check(!summaries.error && summaries.data?.some((row) => row.fan_id === A.fanId), `0073 creator_fan_summaries lists the creator's fan (${summaries.error?.message ?? summaries.data?.length})`);
+    const analytics = await admin.rpc("creator_analytics_summary", { p_creator: A.id, p_days: 30 });
+    check(!analytics.error && analytics.data?.funnel?.fans >= 1, `0073 creator_analytics_summary aggregates for the creator (${analytics.error?.message ?? JSON.stringify(analytics.data)?.slice(0, 80)})`);
+    for (const [fn, args] of [["creator_obligations", { p_creator: A.id }], ["creator_fan_summaries", { p_creator: A.id }], ["creator_analytics_summary", { p_creator: A.id }]]) {
+      const r = await a.rpc(fn, args);
+      check(r.error?.code === "42501", `0073 a session cannot execute ${fn} (${deniedCode(r)})`);
+    }
+    const anonNotice = await anonClient.rpc("legal_terms_upcoming");
+    check(anonNotice.error?.code === "42501", `0073 anon cannot read the Terms notice RPC (${deniedCode(anonNotice)})`);
+    const creatorNotice = await a.rpc("legal_terms_upcoming");
+    check(!creatorNotice.error, `0073 a creator reads the Terms notice (${creatorNotice.error?.message ?? "ok"})`);
+    const creatorSetsNotice = await a.rpc("set_legal_terms_notice", { p_version: "2099-01-01", p_effective_at: "2099-01-01" });
+    check(/admin required/.test(creatorSetsNotice.error?.message ?? ""), `0073 a creator cannot set the Terms notice (${creatorSetsNotice.error?.message ?? "accepted"})`);
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.

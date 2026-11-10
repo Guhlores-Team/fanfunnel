@@ -289,12 +289,14 @@ export function probeDbSecurity(db, psql) {
   refused("a plain-http tip link", as(U.A, `select public.set_public_profile(null, 'http://tips.example.test/a', null);`), /invalid tip url/);
   refused("a javascript: avatar", as(U.A, `select public.set_creator_note(null, 'javascript:alert(1)');`), /invalid avatar url/);
   refused("an avatar off our storage origin", as(U.A, `select public.set_creator_note(null, 'https://evil.example.test/avatars/x.png');`), /invalid avatar url/);
-  refused("a non-https prize image", as(U.A, `update public.prizes set image_url = 'http://img.example.test/x.png' where id = '${PR.A}';`), /invalid prize image url/);
+  // 0073 (DB-05): prizes are written by the editors (service role); the URL guard still fires there.
+  refused("a non-https prize image", asService(`update public.prizes set image_url = 'http://img.example.test/x.png' where id = '${PR.A}';`), /invalid prize image url/);
+  refused("a creator session writes a prize directly", as(U.A, `update public.prizes set image_url = 'https://img.example.test/x.png' where id = '${PR.A}';`), /permission denied for table prizes/);
   expect("valid tip, avatar and image URLs are stored", `
     ${as(U.A, `select public.set_public_profile(null, 'https://tips.example.test/a', null);`)}
     ${as(U.A, `select public.set_creator_note(null, 'https://project.supabase.co/storage/v1/object/public/avatars/${U.A}/a.png');`)}
     select 'profile:' || tip_url || ',' || avatar_url from public.profiles where id = '${U.A}';
-    ${as(U.A, `update public.prizes set image_url = 'https://img.example.test/x.png' where id = '${PR.A}';`)}
+    ${asService(`update public.prizes set image_url = 'https://img.example.test/x.png' where id = '${PR.A}';`)}
     select 'image:' || image_url from public.prizes where id = '${PR.A}';`,
     [`profile:https://tips.example.test/a,https://project.supabase.co/storage/v1/object/public/avatars/${U.A}/a.png`, "image:https://img.example.test/x.png"]);
 

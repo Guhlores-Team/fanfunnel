@@ -5,6 +5,8 @@ import { supabaseUrl } from "@/lib/supabase/url";
 import { externalUrl } from "@/lib/format";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { limitRoute } from "@/lib/api/limit";
+import { isReservedName } from "@/lib/reservedNames";
+import { publicTextCheck } from "@/lib/publicText";
 
 // Field limits and slug shape enforced before persistence. The slug is further
 // normalized in the data layer, so we only need to reject oversized/illegal
@@ -85,6 +87,10 @@ export async function PUT(req: Request) {
   ) {
     return NextResponse.json({ error: "invalid_slug" }, { status: 400 });
   }
+  // TS-03: /c/admin, /c/fanfunnel-support and look-alikes are nobody's page.
+  if (body.slug !== undefined && isReservedName(body.slug)) {
+    return NextResponse.json({ error: "slug_reserved" }, { status: 400 });
+  }
   if (
     body.tipUrl !== undefined &&
     (typeof body.tipUrl !== "string" || !isValidTipUrl(body.tipUrl))
@@ -102,6 +108,13 @@ export async function PUT(req: Request) {
     (typeof body.note !== "string" || body.note.length > MAX_NOTE_LEN)
   ) {
     return NextResponse.json({ error: "invalid_note" }, { status: 400 });
+  }
+  // TS-04: no links, e-mail addresses, phone numbers, other-app handles or
+  // slurs in text every visitor to /c/<slug> and the spin page reads.
+  for (const [value, field] of [[body.tagline, "tagline"], [body.note, "creatorNote"]] as const) {
+    if (value === undefined) continue;
+    const text = publicTextCheck(value, { field });
+    if (!text.ok) return badRequest(text.code);
   }
   // /c/<slug> is ISR (revalidate 60). Fields it renders mark the old and new
   // slug's cached page stale, so a rename or bio edit shows on the next visit
