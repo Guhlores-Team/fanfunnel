@@ -98,40 +98,16 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(redirect);
   }
 
-  // Suspended accounts (profiles.is_active=false) lose dashboard access — RLS
-  // already blocks their writes; this is the matching UI gate. Bounded + fail
-  // OPEN: a slow/erroring read must never lock out every creator (RLS stays the
-  // hard backstop), so we only act on a definitive `false`.
-  let active = true;
-  if (user?.id) {
-    try {
-      const result = await Promise.race([
-        supabase.from("profiles").select("is_active").eq("id", user.id).maybeSingle(),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("is_active timeout")), 2000)
-        ),
-      ]);
-      if ((result as { data: { is_active?: boolean } | null })?.data?.is_active === false) {
-        active = false;
-      }
-    } catch {
-      active = true; // never hang / lock out on a slow read
-    }
-  }
-
-  if (user && !active && path.startsWith("/dashboard")) {
-    const redirect = request.nextUrl.clone();
-    redirect.pathname = "/login";
-    redirect.search = "";
-    redirect.searchParams.set("suspended", "1");
-    return NextResponse.redirect(redirect);
-  }
-
+  // A suspended creator (profiles.is_active=false) is NOT bounced here (WU-01 /
+  // WG-01): the dashboard renders read-only with the suspension notice
+  // (SuspendedBanner), exactly what the admin's confirm box promises, while
+  // can_act_for() and current_user_active() refuse every write in the
+  // database. The sign-in page still explains `?suspended=1` for old links.
   // Two-factor: a user who turned it on must enter a code (aal2) before the
   // dashboard, admin or agency pages. getUser() above verified the session and
   // returned its factors; the aal claim is read from that same session's token
   // (a local read, no extra round-trip). Fails closed: no readable aal = aal1.
-  if (user && active && needsTwoFactorStep(path) && hasVerifiedFactor(user)) {
+  if (user && needsTwoFactorStep(path) && hasVerifiedFactor(user)) {
     const {
       data: { session },
     } = await supabase.auth.getSession();
@@ -144,8 +120,9 @@ export async function updateSession(request: NextRequest) {
     }
   }
 
-  // Already signed in (and active)? Skip the auth pages.
-  if (user && active && (path === "/login" || path === "/signup")) {
+  // Already signed in? Skip the auth pages (a suspended creator too: the
+  // dashboard is where the notice is).
+  if (user && (path === "/login" || path === "/signup")) {
     const redirect = request.nextUrl.clone();
     redirect.pathname = "/dashboard";
     redirect.search = "";
