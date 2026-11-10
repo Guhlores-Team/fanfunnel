@@ -10,7 +10,8 @@ import { publicCreatorName } from "@/lib/publicCreator";
 //   1. the caller's own session proves, here and every time, that it may act
 //      for `creatorId` (literal `true` from can_act_for with the permission
 //      the caller is using: 'view' for the creator's own reads, 'chat' for a
-//      seat in the Inbox). Without that proof nothing is read or returned;
+//      seat in the Inbox, 'fulfil' for a seat in the queue). Without that
+//      proof nothing is read or returned;
 //   2. a name is returned only for a profile that owns or holds a seat in the
 //      creator's own agency. Anyone else (a removed seat, support) gets the
 //      neutral label, and an e-mail address is never used as a name.
@@ -36,7 +37,7 @@ type Session = { rpc: (name: string, args: Record<string, unknown>) => PromiseLi
 export async function actorNames(
   session: unknown,
   creatorId: string,
-  perm: "view" | "chat",
+  perm: "view" | "chat" | "fulfil",
   actorIds: Iterable<string | null | undefined>,
   now: number = Date.now(),
 ): Promise<Map<string, string>> {

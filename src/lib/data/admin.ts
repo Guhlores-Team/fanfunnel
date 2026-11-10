@@ -176,6 +176,8 @@ export interface AgencyTie {
   orgName: string;
   kind: "owner" | "staff" | "creator";
   role: OrgRole | null;
+  /** WG-13, on a `creator` tie: false while the managing agency's owner is suspended. */
+  ownerActive?: boolean | null;
 }
 export interface AgencyOverview {
   org: { id: string; name: string } | null;
@@ -200,6 +202,24 @@ export const EXPIRED_INVITE_GRACE_DAYS = 14;
  * seat elsewhere, has several ties; `orgId` picks the console to show and
  * `ties` lists every one with its kind, so each can be left.
  */
+/** One agency's name and owner standing, as this session may read it (owner, seat or managed creator). */
+async function readOrgState(sb: Awaited<ReturnType<typeof createClient>>, orgId: string): Promise<{ name: string; ownerActive: boolean | null } | null> {
+  const { data, error } = await sb.from("orgs").select("id, name, owner_active").eq("id", orgId).maybeSingle();
+  if (error || !data) return null;
+  const row = data as unknown as { name: string; owner_active?: unknown };
+  return { name: row.name, ownerActive: typeof row.owner_active === "boolean" ? row.owner_active : null };
+}
+
+/** A45/WG-13: what a managed creator (no console of its own) is told about its agency. */
+export async function getManagedOrgState(orgId: string | null): Promise<{ orgName: string | null; ownerActive: boolean | null }> {
+  if (!orgId || !isSupabaseConfigured()) return { orgName: null, ownerActive: null };
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { orgName: null, ownerActive: null };
+  const state = await readOrgState(sb, orgId);
+  return { orgName: state?.name ?? null, ownerActive: state?.ownerActive ?? null };
+}
+
 export async function getAgencyOverview(opts: { orgId?: string | null } = {}): Promise<AgencyOverview | null> {
   if (!isSupabaseConfigured()) return null;
   const sb = await createClient();
@@ -227,10 +247,10 @@ export async function getAgencyOverview(opts: { orgId?: string | null } = {}): P
     ties.push({ orgId: st.org.id, orgName: st.org.name, kind: "staff", role: st.role });
   }
   if (managedOrgId && managedOrgId !== owned?.id) {
-    const { data: managed } = await sb.from("orgs").select("id, name").eq("id", managedOrgId).maybeSingle();
-    const m = managed as { id: string; name: string } | null;
-    // A managed creator cannot read the orgs row through RLS unless seated there; name it when known.
-    ties.push({ orgId: managedOrgId, orgName: m?.name ?? seats.find((x) => x.org.id === managedOrgId)?.org.name ?? "the agency that manages your account", kind: "creator", role: null });
+    // 0073 (orgs_tie_read): a managed creator reads its agency's name and
+    // whether the owner's account is in good standing.
+    const m = await readOrgState(sb, managedOrgId);
+    ties.push({ orgId: managedOrgId, orgName: m?.name ?? seats.find((x) => x.org.id === managedOrgId)?.org.name ?? "the agency that manages your account", kind: "creator", role: null, ...(m ? { ownerActive: m.ownerActive } : {}) });
   }
 
   // The console to show: the requested org when the viewer owns or sits in it, else the owned org, else the first seat.
@@ -239,14 +259,10 @@ export async function getAgencyOverview(opts: { orgId?: string | null } = {}): P
   if (!org) return null;
   const isOwner = !!owned && owned.id === org.id;
 
-  // WG-13: the owner's account state (profiles RLS shows other rows to admins only; null = unknown).
-  let ownerActive: boolean | null = null;
-  if (isOwner) ownerActive = true;
-  else {
-    const { data: ownerRow } = await sb.from("orgs").select("owner:profiles!orgs_owner_id_fkey(is_active)").eq("id", org.id).maybeSingle();
-    const active = (ownerRow as unknown as { owner: { is_active: boolean } | null } | null)?.owner?.is_active;
-    ownerActive = typeof active === "boolean" ? active : null;
-  }
+  // WG-13: the owner's standing, from orgs.owner_active (0073: maintained by
+  // a trigger, readable by the owner, its seats and its managed creators).
+  // null = unknown to this viewer (a database without the column).
+  const ownerActive: boolean | null = isOwner ? true : (await readOrgState(sb, org.id))?.ownerActive ?? null;
 
   const { data: statRows } = await sb.rpc("org_account_stats", { p_org: org.id });
   const creators: OrgCreatorStat[] = ((statRows ?? []) as {
@@ -407,20 +423,11 @@ export const revokeOrgInvite = (inviteId: string) =>
   agencyRpc({ fn: "org_invite_revoke", args: { p_invite: inviteId } });
 export const respondToOrgInvite = (inviteId: string, accept: boolean) =>
   agencyRpc({ fn: "org_invite_respond", args: { p_invite: inviteId, p_accept: accept } });
-export const removeOrgCreator = async (orgId: string, creatorId: string) => {
-  const result = await agencyRpc({ fn: "org_remove_creator", args: { p_org: orgId, p_creator: creatorId } });
-  if ("ok" in result && isSupabaseConfigured()) {
-    // WG-14: the seat scopes that pointed at this creator go too, so a later
-    // re-invitation never silently restores every chatter's access. The
-    // omc_rw policy lets the org owner delete them. (0073 does the same inside
-    // org_remove_creator and org_leave; this is a no-op once it has.)
-    const sb = await createClient();
-    const { data: members } = await sb.from("org_members").select("id").eq("org_id", orgId);
-    const ids = ((members ?? []) as { id: string }[]).map((m) => m.id);
-    if (ids.length > 0) await sb.from("org_member_creators").delete().eq("creator_id", creatorId).in("member_id", ids);
-  }
-  return result;
-};
+// WG-14: org_remove_creator and org_leave delete the seat scopes that pointed
+// at the creator themselves (0073), so a later re-invitation never silently
+// restores a chatter's access. No second write from the app.
+export const removeOrgCreator = (orgId: string, creatorId: string) =>
+  agencyRpc({ fn: "org_remove_creator", args: { p_org: orgId, p_creator: creatorId } });
 export const addOrgMember = (orgId: string, email: string, role: OrgRole) =>
   withInviteEmail(orgId, email, role, () => agencyRpc({ fn: "org_add_member", args: { p_org: orgId, p_email: email, p_role: role } }));
 

@@ -326,14 +326,15 @@ export async function setMyPublicProfile(input: {
     // check), so this one column is written on the server: the session must
     // be an active creator acting for itself (can_act_for 'manage'), the row
     // is its own id, and the value was validated by the route (1..60 or
-    // null). Until profiles.delivery_days exists the answer is not_supported
-    // and the Settings field stays hidden.
+    // null). 0073 added profiles.delivery_days (owner reads its own row; the
+    // CHECK refuses anything outside 1..60 with 23514). A database without
+    // the column answers not_supported and the Settings field stays hidden.
     const { data: allowed, error: permissionError } = await sb.rpc("can_act_for", { target_creator: user.id, perm: "manage" });
     if (permissionError || allowed !== true) return { error: "forbidden" };
     const days = input.deliveryDays;
     if (days !== null && (!Number.isInteger(days) || days < 1 || days > MAX_DELIVERY_DAYS)) return { error: "invalid_delivery_days" };
     const { error: dErr } = await createServiceClient().from("profiles").update({ delivery_days: days } as never).eq("id", user.id);
-    if (dErr) return { error: dErr.code === "PGRST204" || dErr.code === "42703" ? "not_supported" : "db_error" };
+    if (dErr) return { error: dErr.code === "PGRST204" || dErr.code === "42703" ? "not_supported" : dErr.code === "23514" ? "invalid_delivery_days" : "db_error" };
   }
   return { ok: true };
 }

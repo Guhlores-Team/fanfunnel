@@ -1100,9 +1100,11 @@ export function mockArchiveWheel(id: string): { ok: true } | { error: string } {
 }
 
 /** Permanently remove a wheel (demo has no real spin history to protect). */
-export function mockDeleteWheel(id: string): { ok: true } | { error: string } {
+export function mockDeleteWheel(id: string, options: { onlyIfEmpty?: boolean } = {}): { ok: true } | { error: string } {
   const wheel = store.wheels.get(id);
   if (!wheel) return { error: "not_found" };
+  // delete_wheel(p_only_if_empty) parity: a prize, a play or a card keeps the game.
+  if (options.onlyIfEmpty && wheel.prizes.length > 0) return { error: "not_empty" };
   const progress=mockBingoEditError(id,null);if(progress)return {error:progress};
   const hasHistory=[...store.fans.values()].some(fan=>fan.wins.some(win=>win.wheelId===id))||[...(mockFocusState().anonymousWins?.values()??[])].some(win=>win.wheelId===id);
   // delete_wheel (0065): a game a fan link is stored on is archived instead;

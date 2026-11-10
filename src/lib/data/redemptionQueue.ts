@@ -3,6 +3,7 @@
 // polls; this server-side, filtered, keyset-paginated read
 // (creator_redemption_queue, 0064, SECURITY INVOKER so RLS applies) makes
 // every older prize reachable, including the oldest pending one.
+import { actorNames } from "./actorNames";
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import type { RedemptionItem, RedemptionStatus } from "./types";
 import { focusTag } from "./focusTag";
@@ -51,6 +52,8 @@ type QueueRow = {
   fan_name: string;
   /** 0073 (DB-10): the fan the prize belongs to; null when the win has no fan. */
   fan_id?: string | null;
+  /** 0073 (WG-07): who last moved the prize; null until someone does. */
+  actor_id?: string | null;
   pool_snapshot: unknown;
   fair_trace: unknown;
   reward_kind: string | null;
@@ -122,7 +125,16 @@ export async function listRedemptionQueue(opts: {
       ...(opts.fanId ? { p_fan: opts.fanId } : {}),
     });
     if (error) return { error: "db_error" };
-    rows = ((data ?? []) as unknown as QueueRow[]).map(toItem);
+    const queue = (data ?? []) as unknown as QueueRow[];
+    // WG-07: a prize a team member moved says who. The creator's own moves
+    // carry no line; names come from actorNames, which proves the session
+    // again ('view' for the creator, 'fulfil' for a seat) before reading.
+    const moved = queue.filter((r) => r.status !== "pending" && typeof r.actor_id === "string" && r.actor_id !== acting.creatorId);
+    const names = moved.length ? await actorNames(sb, acting.creatorId, acting.creatorId === user.id ? "view" : "fulfil", moved.map((r) => r.actor_id)) : null;
+    rows = queue.map((r) => {
+      const via = r.status !== "pending" && r.actor_id ? names?.get(r.actor_id) : undefined;
+      return via ? { ...toItem(r), via } : toItem(r);
+    });
   }
   const items = rows.slice(0, limit);
   return { items, next: rows.length > limit ? encodeQueueCursor(items[items.length - 1]) : null };

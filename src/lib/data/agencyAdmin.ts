@@ -46,10 +46,12 @@ export async function myAgencyImpact(): Promise<Omit<AgencyImpact, "memberIds" |
 }
 
 /**
- * Leave a bell notice for every seat and managed creator (creator_notices;
- * 0073 adds the kinds — until then the CHECK refuses and the miss is logged).
+ * Leave a bell notice for every seat and managed creator when an agency is
+ * dissolved (creator_notices). The owner-suspended notice is NOT written
+ * here: a database trigger on profiles.is_active writes it (0073), so the
+ * app never inserts that kind.
  */
-async function leaveAgencyNotices(svc: Service, kind: "agency_dissolved" | "agency_owner_suspended", orgName: string, profileIds: string[]): Promise<number> {
+async function leaveAgencyNotices(svc: Service, kind: "agency_dissolved", orgName: string, profileIds: string[]): Promise<number> {
   if (profileIds.length === 0) return 0;
   try {
     const { error } = await svc.from("creator_notices").insert(profileIds.map((id) => ({ creator_id: id, kind, details: { org_name: orgName.slice(0, 80) } })));

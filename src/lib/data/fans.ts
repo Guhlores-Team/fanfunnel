@@ -701,9 +701,10 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
     return token ? [{ ...row, token }] : [];
   });
   passRows.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
-  // PR-13: link expiry is its own read. Until sessions may select
-  // fan_passes.expires_at the read is refused and the drawer hides the
-  // expiry control (the links themselves always load).
+  // PR-13: link expiry is its own read (0073 grants sessions SELECT on
+  // fan_passes.expires_at under the existing RLS; the token stays revoked).
+  // On a database without that grant the read is refused and the drawer
+  // hides the expiry control; the links themselves always load.
   const expiryRead = await sb.from("fan_passes").select("id, expires_at").eq("creator_id", user.id).eq("fan_id", fanId);
   const expiries = expiryRead.error ? null : new Map(((expiryRead.data ?? []) as unknown as { id: string; expires_at: string | null }[]).map((row) => [row.id, row.expires_at ?? null]));
 

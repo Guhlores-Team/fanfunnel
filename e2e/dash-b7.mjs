@@ -30,8 +30,8 @@
 //           change shows it is being saved.
 //  PR-13    a link can be given an expiry and made permanent again.
 //  WG-18    Admin search, request ages and the build commit.
-//  PA-01/12 + WC-18/19/23/30 too-dark brand colours are refused; skip link,
-//           field errors, the handle hint and the discard list.
+//  PA-12 + WC-18/19/23/30 skip link, field errors, the handle hint and the
+//           discard list.
 //  WU-01    a suspended creator keeps the dashboard with the banner; every
 //           save is refused in plain words and nothing is written.
 //  WU-08/09 + WG-16 the password rule, show/hide toggles and "Sign out
@@ -628,10 +628,15 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       await offer.waitFor({ timeout: 10000 });
       assert((await offer.innerText()).includes(gameName), "the notice names the empty game");
       assert((await json(await request.get(BASE + "/api/wheels"), "list before removal")).wheels.some((w) => w.id === createdId), "nothing is removed without the tap");
+      const removal = page.waitForRequest((r) => r.method() === "DELETE" && r.url().includes(`/api/wheels/${createdId}`));
       await offer.getByRole("button", { name: "Remove it" }).click();
+      assert(new URL((await removal).url()).searchParams.get("empty") === "1", "the removal asks for the empty-only delete");
       await page.getByTestId("toast").filter({ hasText: `Removed "${gameName}"` }).first().waitFor({ timeout: 10000 });
       assert(!(await json(await request.get(BASE + "/api/wheels?archived=1"), "list after removal")).wheels.some((w) => w.id === createdId), "the empty game is gone");
       createdId = null;
+      const keep = await request.delete(BASE + `/api/wheels/${live.id}?hard=1&empty=1`);
+      assert(keep.status() === 409 && (await keep.json()).error === "not_empty", "the empty-only delete refuses a game that has prizes");
+      assert((await json(await request.get(BASE + "/api/wheels"), "list after refusal")).wheels.some((w) => w.id === live.id), "…and the game is still there");
 
       // WC-26: the queue button is disabled and says so while the change is on its way.
       await json(await acknowledgeFixtureFan(request, fan.token), "ack fan");
@@ -721,14 +726,13 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
     }
   });
 
-  await step("b7 PA-01 + PA-12 + WC-18/19/23/30: a too-dark brand colour is refused; skip link, field errors, slug hint and the discard list", async () => {
+  await step("b7 PA-12 + WC-18/19/23/30: skip link, field errors, slug hint and the discard list", async () => {
     const page = await ctx.newPage();
     attachSink(page, sink);
     const profile = await json(await request.get(BASE + "/api/public-profile"), "read profile");
     try {
-      const dark = await request.put(BASE + "/api/account/brand-color", { data: { color: "#050505" } });
-      assert(dark.status() === 400 && (await dark.json()).error === "brand_too_dark", "the route refuses a colour that cannot be read on the dark dashboard");
-
+      // (PA-01 is the fan theme's: any valid hex is accepted and --brand-ui is
+      // adjusted to stay readable, so no colour is refused here.)
       await goto(page, "/dashboard?section=settings", 1500);
       // PA-12: the first Tab stop is the skip link, and it lands on the content.
       await page.keyboard.press("Tab");
@@ -798,6 +802,7 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
         ["new game", await request.post(BASE + "/api/wheels", { data: { name: `b7 sus ${tag}` } })],
         ["set active", await request.patch(BASE + `/api/wheels/${live.id}`, { data: { isActive: true } })],
         ["campaign", await request.post(BASE + "/api/campaigns", { data: { name: `b7 sus ${tag}` } })],
+        ["game unlock request", await request.post(BASE + "/api/me/game-unlock", { data: { game: "scratch" } })],
       ];
       for (const [what, res] of refused) {
         assert(res.status() === 403 && (await res.json()).error === "forbidden", `${what}: refused with 403 forbidden (${res.status()})`);

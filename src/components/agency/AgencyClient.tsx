@@ -43,6 +43,7 @@ interface Tie {
   orgName: string;
   kind: "owner" | "staff" | "creator";
   role: string | null;
+  ownerActive?: boolean | null;
 }
 interface Overview {
   org: { id: string; name: string } | null;
@@ -52,6 +53,8 @@ interface Overview {
   managed?: boolean;
   /** With `managed`: that agency's id, so the creator can leave it. */
   orgId?: string | null;
+  /** With `managed`: the agency's name, when this creator may read it. */
+  orgName?: string | null;
   isOwner: boolean;
   viewerId?: string;
   ownerActive?: boolean | null;
@@ -188,7 +191,7 @@ export default function AgencyClient() {
   const canLeave = leaveKind(data);
 
   if (data && !data.org && data.managed) {
-    return <ManagedByAgency orgId={canLeave === "creator" ? data.orgId ?? null : null} onLeft={() => setLeft("creator")} />;
+    return <ManagedByAgency orgId={canLeave === "creator" ? data.orgId ?? null : null} orgName={data.orgName ?? null} ownerActive={data.ownerActive ?? null} onLeft={() => setLeft("creator")} />;
   }
 
   // No org yet → let the user create one.
@@ -437,6 +440,11 @@ export default function AgencyClient() {
 
       {canLeave === "staff" && <LeaveAgency kind="staff" orgId={org.id} orgName={org.name} onLeft={() => setLeft("staff")} />}
       {/* WG-03: every other tie (a seat in another agency, the agency managing this account) has its own Leave. */}
+      {ties.filter((tie) => tie.kind === "creator" && tie.ownerActive === false).map((tie) => (
+        <p key={`suspended-${tie.orgId}`} role="alert" data-testid="agency-managing-owner-suspended" className="mt-4 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm text-amber-200 text-pretty">
+          The owner account of {tie.orgName}, which manages your creator account, is suspended. Its staff can&apos;t act on your account until FanFunnel reactivates it; your own dashboard keeps working.
+        </p>
+      ))}
       {ties.filter((tie): tie is Tie & { kind: "staff" | "creator" } => tie.kind !== "owner" && tie.orgId !== org.id).map((tie) => (
         <LeaveAgency key={tie.orgId} kind={tie.kind} orgId={tie.orgId} orgName={tie.orgName} onLeft={() => { setLoading(true); void refresh(); }} />
       ))}
@@ -614,10 +622,15 @@ function AddByEmail({
 
 /** A45: a creator an agency manages has no console; say what that means,
  *  and let them leave it. */
-function ManagedByAgency({ orgId, onLeft }: { orgId: string | null; onLeft: () => void }) {
+function ManagedByAgency({ orgId, orgName, ownerActive, onLeft }: { orgId: string | null; orgName?: string | null; ownerActive?: boolean | null; onLeft: () => void }) {
   return (
     <div data-testid="agency-managed" className="mx-auto max-w-md px-5 py-24 text-center text-ink">
-      <h1 className="text-xl font-bold">You&apos;re part of an agency</h1>
+      <h1 className="text-xl font-bold">{orgName ? `You're part of ${orgName}` : "You're part of an agency"}</h1>
+      {ownerActive === false && (
+        <p role="alert" data-testid="agency-owner-suspended" className="mt-4 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-left text-sm text-amber-200 text-pretty">
+          This agency&apos;s owner account is suspended, so its staff can&apos;t act on your account until FanFunnel reactivates it. Your own dashboard, games and fan links keep working{orgId ? ", and you can leave the agency below." : "."}
+        </p>
+      )}
       <p className="mt-3 text-sm text-muted text-pretty">
         You accepted an agency&apos;s invitation. Its owner and managers can run your games, campaigns, fans and
         fulfilment, and staff it assigns to you can answer your inbox or fulfil your prizes. Everything they do shows up

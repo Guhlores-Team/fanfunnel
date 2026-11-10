@@ -103,6 +103,7 @@ export function statusForError(code: string): number {
     case "sold_out":
     case "already_delivered":
     case "has_history":
+    case "not_empty":
     case "game_busy":
     case "conflict":
     case "last_admin":
