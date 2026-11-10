@@ -13,9 +13,9 @@ import { makeFairRngV3, normalizeClientSeed, randomSeedHex, sha256Hex } from "@/
 import { buildFocusPoolSnapshot, drawFromSnapshot, hashPoolSnapshot } from "@/lib/games/wheel/fairnessV3";
 import { openReward } from "@/lib/rewards/crypto";
 import type { DeliveredReward, PrizeDelivery } from "@/lib/rewards/config";
-import type { Prize, SpinResult } from "@/lib/games/wheel/types";
-import { showsStock, toPublicPrize } from "@/lib/games/wheel/publicView";
-import { toWheelConfig, type DbWheelRow, type SpinError, isUuid } from "./shared";
+import type { Prize, PublicPrize, SpinResult } from "@/lib/games/wheel/types";
+import { showsStock, toPublicPrize, toPublicWheel } from "@/lib/games/wheel/publicView";
+import { toWheelConfig, type DbWheelRow, type SpinError, isUuid, WHEEL_SELECT } from "./shared";
 import { toFanFocusView, type FocusRow } from "./focusView";
 import { fireWebhooks } from "./webhooks";
 import { notifyCreator } from "@/lib/push/notify";
@@ -53,7 +53,7 @@ type Receipt = {
   gameKind?: "wheel" | "scratch" | "bingo"; presentation?: unknown; bonusWins?: {line:number;shareId:string;prize:Prize;spin:SpinRow;stockAfter?:number|null;reward?:Receipt["reward"]}[];
   reward?: { kind: DeliveredReward["kind"]; cipher: string; iv: string; keyVersion: number } | null;
 };
-export type SpinAttemptStatus = { status: "committed"; result: SpinResult } | { status: "absent" | "pending" | "conflict" | "unavailable" } | { status: "declined"; error: SpinError["error"] };
+export type SpinAttemptStatus = { status: "committed"; result: SpinResult } | { status: "absent" | "pending" | "conflict" | "unavailable" | "not_found" } | { status: "declined"; error: SpinError["error"] };
 const ERROR_CODES: ReadonlySet<string> = new Set(["not_found", "no_spins", "no_prizes", "rate_limited", "blocked", "on_break", "needs_ack", "db_error", "spin_pending"]);
 // prepare_spin_attempt declines `no_wheel` when no playable game resolves for
 // the link: to the fan that is the same as a wheel with nothing left to win.
@@ -96,9 +96,17 @@ async function receiptBingoCard(token:string,result:SpinResult,sb:Service):Promi
   if(read.status==="ok")return read.card;
   return result.presentation?.kind==="bingo"?result.presentation.after:null;
 }
-async function refreshReceipt(token:string,receipt:Receipt,requestId:string,sb:Service):Promise<SpinResult> {
+/** RF-01: the public prize list of the wheel a receipt was drawn from (replays read it back; a fresh commit passes its own). */
+async function receiptPrizes(receipt:Receipt,sb:Service):Promise<PublicPrize[]|undefined> {
+  try{
+    const {data}=await sb.from("wheels").select(WHEEL_SELECT).eq("id",receipt.spin.wheel_id).maybeSingle();
+    return data?toPublicWheel(toWheelConfig(data as unknown as DbWheelRow)).prizes:undefined;
+  }catch{return undefined;}
+}
+async function refreshReceipt(token:string,receipt:Receipt,requestId:string,sb:Service,prizes?:PublicPrize[]):Promise<SpinResult> {
   const result=resultFromReceipt(receipt,requestId);
-  const response={...result,...(await readPlayAfterSpin(sb,receipt.spin.fan_id)),...(await getFanFocusDisplay(token,sb)),...(result.gameKind==="bingo"?{bingoCard:await receiptBingoCard(token,result,sb)}:{})};
+  const pool=prizes??(result.gameKind===undefined?await receiptPrizes(receipt,sb):undefined);
+  const response={...result,...(pool?{prizes:pool}:{}),...(await readPlayAfterSpin(sb,receipt.spin.fan_id)),...(await getFanFocusDisplay(token,sb)),...(result.gameKind==="bingo"?{bingoCard:await receiptBingoCard(token,result,sb)}:{})};
   const exposed=[...(result.reward?[receipt.spin.id]:[]),...(result.bonusWins??[]).flatMap((bonus,index)=>bonus.reward?[receipt.bonusWins![index].spin.id]:[])];
   if(!await recordRewardDisclosures(sb,token,exposed))throw new Error("reward_disclosure_pending");
   return response;
@@ -115,6 +123,11 @@ export async function readSpinAttempt(token: string, intent: SpinIntent, sb = cr
     catch { return { status: "pending" }; }
   }
   if (reply.status === "declined") return { status: "declined", ...spinError(reply.error) };
+  // RS-01: an unknown token with no such attempt is a miss (404), not an outage.
+  // `not_found` arrives once get_spin_attempt_status (0073) says it; until
+  // then the SQL's first-branch `unavailable` (attempt missing AND no live
+  // pass) is indistinguishable from a paused link, so it stays 503.
+  if (reply.status === "not_found") return { status: "not_found" };
   return { status: reply.status === "absent" || reply.status === "pending" || reply.status === "conflict" ? reply.status : "unavailable" };
 }
 type ExpectedReward = { delivery: PrizeDelivery; codeId?: string; cipher?: string; iv?: string; keyVersion?: number };
@@ -241,7 +254,7 @@ export async function commitSpinAttempt(token:string,intent:SpinIntent,sb=create
         for(const event of events){runAfterResponse(()=>fireWebhooks(ctx.creatorId,{event:event.reward?"prize_delivered":"prize_pending",prize:event.prize.label,rarity:event.prize.rarity,at:event.spin.created_at??new Date().toISOString()}));
           runAfterResponse(()=>notifyCreator(ctx.creatorId,{type:"spin",spinId:event.spin.id,fanId:ctx.fanId,prizeId:event.prize.id,stockAfter:event.stockAfter}));}
       }
-      try{return await refreshReceipt(token,receipt,intent.requestId,sb);}catch{return {error:"spin_pending"};}
+      try{return await refreshReceipt(token,receipt,intent.requestId,sb,kind==="wheel"?config.prizes.map(p=>toPublicPrize(p,{showStock:showsStock(config)})):undefined);}catch{return {error:"spin_pending"};}
     }
     if(!reprepare)return {error:"spin_pending"};
   }

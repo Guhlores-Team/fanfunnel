@@ -9,8 +9,12 @@ export async function POST(req: Request) {
     { scope: "spin-status", limit: 60, windowMs: 60_000 }, async (token, body) => {
       if (!validSpinIntent(body)) return NextResponse.json({ error: "bad_request" }, { status: 400 });
       const result = await getSpinAttemptStatus(token, body);
+      // RS-01: an unknown link is a 404 (counted by withFanMissLimit, C2), a
+      // genuinely unreachable ledger a 503 with a retry hint.
+      if (result.status === "not_found") return NextResponse.json({ error: "not_found", status: "not_found" }, { status: 404 });
       const withCode = "result" in result && result.result ? { ...result, result: withClaimCode(result.result) } : result;
-      return NextResponse.json(withCode, { status: result.status === "conflict" ? 409 : result.status === "unavailable" ? 503 : 200 });
+      return NextResponse.json(withCode, { status: result.status === "conflict" ? 409 : result.status === "unavailable" ? 503 : 200,
+        ...(result.status === "unavailable" ? { headers: { "Retry-After": "5" } } : {}) });
     });
   response.headers.set("Cache-Control", "no-store");
   return response;

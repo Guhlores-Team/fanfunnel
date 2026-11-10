@@ -1278,6 +1278,11 @@ export async function mockGameFixture(token: string, clientSeed: string, targetP
 }
 
 type MockSpinSuccess = import("@/lib/games/wheel/types").SpinResult & { shareId: string; nextSpinHash: string };
+/** RF-01 parity: the fan-safe prize list of the link's resolved game, in order. */
+function mockSpinPrizes(pass: Parameters<typeof mockResolvedSpinWheelId>[0]): import("@/lib/games/wheel/types").PublicPrize[] {
+  const wheel = store.wheels.get(mockResolvedSpinWheelId(pass)) ?? activeWheel();
+  return toPublicWheel(wheel).prizes;
+}
 export async function mockSpin(token: string, clientSeed = "", requestId: string = crypto.randomUUID(), publishedSeedHash?: string): Promise<MockSpinSuccess | import("./shared").SpinError> {
   requestId = requestId.toLowerCase();
   const found = passForToken(token);
@@ -1294,7 +1299,7 @@ export async function mockSpin(token: string, clientSeed = "", requestId: string
       if (existing.token !== token || existing.hash !== hash) return { error: "db_error" as const };
       if (!existing.result) return { error: "spin_pending" as const };
       if("error" in existing.result)return existing.result;
-      const response={ ...structuredClone(existing.result), replayed: true, spinsRemaining: found.pass.spinsRemaining, nextSpinHash: found.pass.nextServerSeedHash!, ...mockFanFocusDisplay(token),
+      const response={ ...structuredClone(existing.result), replayed: true, prizes: mockSpinPrizes(found.pass), spinsRemaining: found.pass.spinsRemaining, nextSpinHash: found.pass.nextServerSeedHash!, ...mockFanFocusDisplay(token),
         ...(existing.result.gameKind==="bingo"?{bingoCard:structuredClone(currentMockBingo(found.fan.id,mockResolvedSpinWheelId(found.pass))?.state??null)}:{}),
         play: countPlay(found.fan.spinTimes ?? []), reminderDue: reminderDue(countPlay(found.fan.spinTimes ?? []).today, found.fan.playReminderDaily ?? null) } as MockSpinSuccess;
       return mockRecordRewardDisclosures(token,response)?response:{error:"spin_pending" as const};
@@ -1302,6 +1307,7 @@ export async function mockSpin(token: string, clientSeed = "", requestId: string
     const attempt = { token, fanId: found.fan.id, hash, createdAt: new Date().toISOString() } as { token: string; fanId: string; hash: string; createdAt?: string; finishedAt?: string; result?: import("@/lib/games/wheel/types").SpinResult | import("./shared").SpinError };
     state.attempts.set(requestId, attempt);
     const result = await mockSpinLocked(token, clientSeed, requestId, publishedSeedHash);
+    if (!("error" in result)) result.prizes = mockSpinPrizes(found.pass);
     attempt.result = structuredClone(result);
     if (!("error" in result) || result.error !== "spin_pending") attempt.finishedAt = new Date().toISOString();
     return "error" in result || mockRecordRewardDisclosures(token,result)?result:{error:"spin_pending" as const};
@@ -1310,7 +1316,8 @@ export async function mockSpin(token: string, clientSeed = "", requestId: string
 
 export async function mockReadSpinAttempt(token: string, intent: SpinIntent): Promise<SpinAttemptStatus> {
   const found = passForToken(token);
-  if (!found) return { status: "unavailable" };
+  // RS-01 parity with get_spin_attempt_status (0073): an unknown link is a miss.
+  if (!found) return { status: "not_found" };
   if (found.fan.blockedAt || found.fan.selfExcludedAt || !mockDemoCreatorActive()) return { status: "unavailable" };
   const hash = await sha256Hex(JSON.stringify(["spin-attempt-v1", "wheel", normalizeClientSeed(intent.clientSeed), intent.publishedSeedHash?.toLowerCase() ?? null]));
   const attempt = mockFocusState().attempts.get(intent.requestId.toLowerCase());
@@ -1318,7 +1325,7 @@ export async function mockReadSpinAttempt(token: string, intent: SpinIntent): Pr
   if (attempt.token !== token || attempt.hash !== hash) return { status: "conflict" };
   if (!attempt.result) return { status: "pending" };
   if("error"in attempt.result)return {status:"declined",error:attempt.result.error};
-  const result={ ...structuredClone(attempt.result), replayed: true, spinsRemaining: found.pass.spinsRemaining, nextSpinHash: found.pass.nextServerSeedHash!, ...mockFanFocusDisplay(token),
+  const result={ ...structuredClone(attempt.result), replayed: true, prizes: mockSpinPrizes(found.pass), spinsRemaining: found.pass.spinsRemaining, nextSpinHash: found.pass.nextServerSeedHash!, ...mockFanFocusDisplay(token),
     ...(attempt.result.gameKind==="bingo"?{bingoCard:structuredClone(currentMockBingo(found.fan.id,mockResolvedSpinWheelId(found.pass))?.state??null)}:{}),
     play: countPlay(found.fan.spinTimes ?? []), reminderDue: reminderDue(countPlay(found.fan.spinTimes ?? []).today, found.fan.playReminderDaily ?? null) };
   return mockRecordRewardDisclosures(token,result)?{status:"committed",result}:{status:"pending"};

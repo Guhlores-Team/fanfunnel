@@ -128,21 +128,44 @@ export const SPIN_RECOVERY_COPY = {
   absent: "Your spin has not been confirmed. Try this same spin again: it keeps the same request, so it can only count once.",
   unavailable: "We cannot check your spin right now. Your next play stays locked until this one is confirmed.",
   conflict: "This saved spin could not be matched safely. Keep this link and contact your creator before playing again.",
+  // RS-13: the link behind a saved spin no longer exists; nothing can be owed on it.
+  gone: "This link no longer works, so that spin could not happen. Ask your creator for a new link.",
+  // RF-07: the request never left the phone; nothing is being checked yet.
+  offline: "You're offline. When you're back online, tap Check this spin to pick up where you left off.",
   storage: "Playing needs this browser to save a spin request safely. Allow site storage in your browser settings, then check again. You can still view your previous wins.",
   // FD-5: an app's built-in browser has no site settings to change.
   storageInApp: "This app's built-in browser can't save your spin safely. Open this link in your phone's browser (Safari or Chrome) to play. Your wins are saved.",
 };
 
+/**
+ * RF-06: refusals /api/spin answers BEFORE opening an attempt (or by declining
+ * the attempt outright). The request id is spent or never seen, so the saved
+ * intent can be released at once instead of parking the fan on "Check this
+ * spin". A 503 (`db_error`, `spin_pending`, `unavailable`) stays pending: the
+ * ledger may have committed. `blocked` is handled on its own (FD-3).
+ */
+export const TERMINAL_SPIN_REFUSALS: readonly string[] = ["not_found", "no_spins", "no_prizes", "rate_limited", "on_break", "needs_ack", "bad_request", "upgrade_required"];
+
 /** Only a bound, successful terminal status can release the saved identity. */
-export function classifySpinStatus(value: unknown, httpOk: boolean):
+export function classifySpinStatus(value: unknown, httpOk: boolean, httpStatus?: number):
   | { kind: "committed"; result: unknown }
   | { kind: "declined"; error: string }
+  | { kind: "gone" }
   | { kind: "keep"; message: string; absent: boolean } {
   const body = value && typeof value === "object" ? value as Record<string, unknown> : {};
   if (httpOk && body.status === "committed" && body.result && typeof body.result === "object") return { kind: "committed", result: body.result };
   const terminalErrors = ["not_found", "no_spins", "no_prizes", "rate_limited", "blocked", "on_break", "needs_ack", "db_error"];
   if (httpOk && body.status === "declined" && typeof body.error === "string" && terminalErrors.includes(body.error)) return { kind: "declined", error: body.error };
+  // RS-13: a 404 is the ledger saying "no such link and no such attempt" (RS-01): terminal.
+  if (!httpOk && httpStatus === 404 && body.status === "not_found") return { kind: "gone" };
   return { kind: "keep", absent: httpOk && body.status === "absent", message: body.status === "absent" ? SPIN_RECOVERY_COPY.absent
     : body.status === "conflict" ? SPIN_RECOVERY_COPY.conflict
     : httpOk && body.status === "pending" ? SPIN_RECOVERY_COPY.pending : SPIN_RECOVERY_COPY.unavailable };
+}
+
+/** RF-07: a fetch that never reached the server (offline, aborted, DNS) rather than a refusal. */
+export function isTransportFailure(error: unknown, online = typeof navigator === "undefined" ? true : navigator.onLine): boolean {
+  if (!online) return true;
+  if (!(error instanceof Error)) return false;
+  return error.name === "AbortError" || error.name === "TypeError";
 }
