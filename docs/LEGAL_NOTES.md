@@ -254,7 +254,7 @@ once their thresholds are met.
 - Fans' acceptance now stores the Terms version (`fans.acked_terms_version`); a new version shows
   the age/terms gate again.
 - The access form no longer mentions payouts.
-- The access form says creator accounts are free for now, and its "not approved" screen gives the
+- The access form says creator accounts are free during the pilot (TS-15), and its "not approved" screen gives the
   contact address (from `LEGAL.contactEmail`).
 - The contact address appears only in `src/lib/legal.ts`; `src/lib/legal.test.ts` fails if any
   other file in `src/` or `e2e/` spells it out. Moving to a FanFunnel domain is a one-line change.

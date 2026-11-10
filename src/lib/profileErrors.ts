@@ -44,10 +44,12 @@ export function displayNameInputError(name: string, opts: { allowReserved?: bool
   return null;
 }
 
-/** set_display_name's error as a stable code. */
+/** set_display_name's error as a stable code (0073 adds a "reserved" refusal). */
 export function displayNameRpcError(error: DbError): string {
   if (error?.code !== "22023") return "db_error";
-  return /e-?mail/i.test(error.message ?? "") ? "name_looks_like_email" : "invalid_display_name";
+  const message = error.message ?? "";
+  if (/reserved/i.test(message)) return "name_reserved";
+  return /e-?mail/i.test(message) ? "name_looks_like_email" : "invalid_display_name";
 }
 
 /** set_public_profile's (or the profiles trigger's) error as a stable code. */
@@ -55,6 +57,7 @@ export function publicProfileRpcError(error: DbError): string {
   if (error?.code === "23505") return "slug_taken";
   if (error?.code !== "22023") return "db_error";
   const message = error.message ?? "";
+  if (/reserved/i.test(message)) return "slug_reserved";
   if (/slug/i.test(message)) return "invalid_slug";
   if (/tagline/i.test(message)) return "invalid_tagline";
   if (/tip url/i.test(message)) return "invalid_tip_url";

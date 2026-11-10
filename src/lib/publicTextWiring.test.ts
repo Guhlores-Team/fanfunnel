@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { displayNameErrorMessage, displayNameInputError, publicProfileErrorMessage } from "./profileErrors";
+import { displayNameErrorMessage, displayNameInputError, displayNameRpcError, publicProfileErrorMessage, publicProfileRpcError } from "./profileErrors";
 import { descriptionError, labelError, validateWheelDraft } from "./games/wheel/validate";
 import { wheelSaveErrorMessage } from "@/components/dashboard/wheelSaveErrors";
 import { RESERVED_NAME_MESSAGE } from "./reservedNames";
@@ -30,6 +30,12 @@ check("length still wins first", displayNameInputError("x".repeat(81)) === "name
 check("name_reserved has copy", displayNameErrorMessage("name_reserved") === RESERVED_NAME_MESSAGE);
 check("contains_link has copy", /links or web addresses/.test(displayNameErrorMessage("contains_link")));
 check("unknown codes keep the generic line", displayNameErrorMessage("db_error") === "Couldn't save your name. Please try again.");
+
+// The database's own refusals (0073) arrive as the same codes.
+check("set_display_name 'reserved' → name_reserved", displayNameRpcError({ code: "22023", message: "display name is reserved" }) === "name_reserved");
+check("set_display_name e-mail refusal unchanged", displayNameRpcError({ code: "22023", message: "display name must not contain the account e-mail" }) === "name_looks_like_email");
+check("set_public_profile 'reserved' → slug_reserved", publicProfileRpcError({ code: "22023", message: "public slug is reserved" }) === "slug_reserved");
+check("set_public_profile slug shape refusal unchanged", publicProfileRpcError({ code: "22023", message: "invalid public slug" }) === "invalid_slug");
 
 // Public page (slug, tagline, note).
 check("slug_reserved has copy", /reserved for FanFunnel/.test(publicProfileErrorMessage("slug_reserved")));
