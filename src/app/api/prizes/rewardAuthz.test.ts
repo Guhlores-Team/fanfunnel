@@ -23,6 +23,7 @@ let visible = true;
 let canEdit = false;
 let admin = false;
 let serviceClients = 0;
+let serviceError: { code: string; message: string } | null = null;
 const sessionCalls: { name: string; args: Record<string, unknown> }[] = [];
 const serviceCalls: { name: string; args: Record<string, unknown> }[] = [];
 
@@ -42,6 +43,7 @@ const service = {
   from: () => chain({ delivery: "link", stock: null }),
   rpc: async (name: string, args: Record<string, unknown>) => {
     serviceCalls.push({ name, args });
+    if (serviceError) return { data: null, error: serviceError };
     return { data: 1, error: null };
   },
 };
@@ -95,6 +97,19 @@ async function main() {
   canEdit = false;
   admin = true;
   check("an admin may edit", (await put(PRIZE, { kind: "manual" })).status === 200);
+
+  // 0073: the prize's creator is suspended. The database refuses the write
+  // (creator_unavailable, 42501) even for an admin; that is a refusal, said
+  // as one, not a database fault.
+  serviceError = { code: "42501", message: "creator_unavailable" };
+  const suspendedPut = await put(PRIZE, link);
+  check("a suspended creator's prize: delivery change → 403 forbidden, not db_error", suspendedPut.status === 403 && ((await suspendedPut.json()) as { error: string }).error === "forbidden");
+  const suspendedCodes = await codes(PRIZE, "QRSTUVWX-3");
+  check("a suspended creator's prize: codes → 403 forbidden, not db_error", suspendedCodes.status === 403 && ((await suspendedCodes.json()) as { error: string }).error === "forbidden");
+  serviceError = { code: "42501", message: "permission denied for function set_prize_delivery" };
+  const other = await put(PRIZE, link);
+  check("any other 42501 stays a generic failure", other.status !== 403 && ((await other.json()) as { error: string }).error === "db_error");
+  serviceError = null;
   admin = false;
 
   canEdit = true;
