@@ -97,7 +97,7 @@ export default function LoginForm({ params }: { params: LoginParams }) {
         // If email confirmation is on, there's no session yet.
         if (!data.session) {
           setMsg(
-            `Step 1 done. We sent a confirmation link to ${email.trim()}: open it on any device (it works for 1 hour), then sign in here to tell us about you. That's the last step before we review your request.`
+            `Step 1 done. We sent a confirmation link to ${email.trim()}: open it soon, on any device, then sign in here to tell us about you. That's the last step before we review your request.`
           );
           setMode("signin");
           setPassword("");

@@ -20,7 +20,7 @@ import { TotpChallenge } from "./totp";
 const COPY = {
   reset: {
     checking: "Checking your reset link…",
-    expiredBody: "This reset link is invalid or has expired. Request a fresh one; it works on any device for 1 hour.",
+    expiredBody: "This reset link is invalid or has expired. Request a fresh one; it works on any device.",
     title: "Choose a new password",
     intro: "Enter a new password for your account.",
     label: "New password",

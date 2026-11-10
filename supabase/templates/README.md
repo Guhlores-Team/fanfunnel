@@ -84,7 +84,7 @@ the dashboard as if the change were complete (WU-04).
 Owner step: set the Site URL and Redirect URLs as above, then paste the five updated link templates into **TEST now** and into
 **LIVE at go-live** (docs/GO_LIVE.md §3). Admin "New account" invites need the
 updated `invite.html` (the old one could not finish an invite). Also in
-Authentication → Settings: **Email OTP expiry** (the templates say 1 hour; raise it
-up to 24 h if invited creators open their mail later), keep **Secure email change**
+Authentication → Settings: **Email OTP expiry** (1 h by default, up to 24 h; the e-mails and pages say
+"for a limited time", so either value is consistent), keep **Secure email change**
 ON (the app's copy assumes both links), and configure **custom SMTP** (the
 built-in mailer sends 2 e-mails per hour for the whole project).

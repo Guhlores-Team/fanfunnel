@@ -58,7 +58,7 @@ export default async function ConfirmLandingPage({
           {copy.cta} →
         </button>
         <p className="mt-4 text-xs text-white/50">
-          This link works once, on any device, and expires 1 hour after it was sent. Nothing happens until you tap the button, so a
+          This link works once, on any device, for a limited time after it was sent. Nothing happens until you tap the button, so a
           mail app that opened it for you first did no harm.
         </p>
         <p className="mt-3 text-xs text-white/50">

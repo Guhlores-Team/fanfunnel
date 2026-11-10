@@ -18,7 +18,9 @@ export interface AuthLinkNoticeCopy {
   actions: AuthLinkAction[];
 }
 
-const ANY_DEVICE = "Links work on any device or browser, once, for 1 hour.";
+// No duration: the lifetime is the project's "Email OTP expiry" setting (1 h by
+// default, up to 24 h; OWNER_STEPS stage 2), which the app cannot read.
+const ANY_DEVICE = "Links work once, on any device or browser, for a limited time.";
 
 /**
  * What the sign-in page says for /login?error=auth_link&type=…&reason=….
@@ -45,19 +47,19 @@ export function authLinkNotice(type: string | null, reason: string | null): Auth
     case "recovery":
       return {
         title: "This password reset link was already used or has expired",
-        body: `Request a new reset link and open it within the hour. ${ANY_DEVICE}`,
+        body: `Request a new reset link and open it soon after it arrives. ${ANY_DEVICE}`,
         actions: ["reset_link"],
       };
     case "invite":
       return {
         title: "This invitation has expired",
-        body: `Invitations work for 1 hour after they're sent. Ask the admin who invited you to send a new one, or use "Send a new password reset link" with the invited address: that also finishes setting up the account. ${ANY_DEVICE}`,
+        body: `Invitations only work for a limited time after they're sent. Ask the admin who invited you to send a new one, or use "Send a new password reset link" with the invited address: that also finishes setting up the account. ${ANY_DEVICE}`,
         actions: ["reset_link", "contact_admin"],
       };
     case "email_change":
       return {
         title: "This e-mail change link has expired",
-        body: `Your e-mail wasn't changed. Sign in with your current e-mail and start the change again from Settings › Account; both links then work for 1 hour. ${ANY_DEVICE}`,
+        body: `Your e-mail wasn't changed. Sign in with your current e-mail and start the change again from Settings › Account. ${ANY_DEVICE}`,
         actions: ["sign_in", "settings"],
       };
     case "magiclink":

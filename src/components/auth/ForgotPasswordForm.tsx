@@ -58,7 +58,7 @@ export default function ForgotPasswordForm() {
         <h1 className="text-lg font-bold">Check your inbox</h1>
         <p className="mt-2 text-sm text-white/60">
           If an account exists for <span className="font-medium">{email}</span>, we&rsquo;ve sent a link to reset your password. It
-          works on any device for 1 hour: open it, tap Continue, and choose a new password.
+          works once, on any device, for a limited time: open it soon, tap Continue, and choose a new password.
         </p>
         <p className="mt-2 text-sm text-white/60">Nothing after a few minutes? Check spam, then try again from here.</p>
         <Link href="/login" className="mt-5 inline-flex min-h-11 items-center text-sm text-white/50 hover:text-white">

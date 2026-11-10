@@ -148,7 +148,7 @@ The invitation sender also rechecks current owner/MFA/approval authority after i
 
 ### Re-sending an admin invitation
 
-Invitations expire with the project's Email OTP expiry (1 hour by default; the templates say so).
+Invitations expire with the project's Email OTP expiry (1 hour by default, up to 24 h; OWNER_STEPS stage 2 decides it, and the e-mails and pages say "for a limited time" so either value is consistent).
 To re-send one: Admin › New account with the same address sends a fresh invite while the address is
 still unconfirmed (`src/lib/data/creatorAccount.ts`). The invited person can also self-serve:
 "Forgot password" with the invited address sends a recovery link, and verifying it confirms the
