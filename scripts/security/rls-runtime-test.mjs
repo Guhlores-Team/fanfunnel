@@ -1521,10 +1521,17 @@ async function main() {
     const queueShape = await a.rpc("creator_redemption_queue", { p_limit: 1 });
     check(!queueShape.error && (queueShape.data ?? []).every((row) => "actor_id" in row && "fan_id" in row), `0073 the queue carries fan_id and actor_id (${queueShape.error?.message ?? "ok"})`);
     // 0073 (independent review): narrower reads and reserved agency names.
-    // A is a managed creator of `org` (not seated there): it reads the brief, not the orgs row.
-    const managedOrg = await a.from("orgs").select("id, owner_id, billing_model").eq("id", org.id);
+    // M is managed by `org` (profiles.org_id) and holds no seat there: it reads
+    // the brief, not the orgs row. A holds the 0062 manager seat in `org`, and a
+    // seat does read its agency's row.
+    const M = await makeCreator("managed73");
+    must(await admin.from("profiles").update({ org_id: org.id }).eq("id", M.id).select("id").single(), "0073 M is managed by the agency");
+    const m = await signedClient(M.email);
+    const managedOrg = await m.from("orgs").select("id, owner_id, billing_model").eq("id", org.id);
     check(!managedOrg.error && (managedOrg.data?.length ?? 0) === 0, `0073 a managed creator cannot read its agency's orgs row (${managedOrg.error?.message ?? managedOrg.data?.length})`);
-    const brief = await a.from("org_briefs").select("org_id, name, owner_active").eq("org_id", org.id);
+    const seatOrg = await a.from("orgs").select("id").eq("id", org.id);
+    check(!seatOrg.error && seatOrg.data?.length === 1, `0073 a seat still reads its agency's orgs row (${seatOrg.error?.message ?? seatOrg.data?.length})`);
+    const brief = await m.from("org_briefs").select("org_id, name, owner_active").eq("org_id", org.id);
     check(!brief.error && brief.data?.length === 1 && brief.data[0].name === `rls ${RUN}` && typeof brief.data[0].owner_active === "boolean", `0073 a managed creator reads its agency's name and owner state from org_briefs (${brief.error?.message ?? JSON.stringify(brief.data)})`);
     const foreignBrief = await b.from("org_briefs").select("org_id");
     check(!foreignBrief.error && (foreignBrief.data?.length ?? 0) === 0, `0073 a creator outside the agency reads no brief (${foreignBrief.error?.message ?? foreignBrief.data?.length})`);
