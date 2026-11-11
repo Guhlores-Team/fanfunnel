@@ -217,6 +217,10 @@ async function recordRuntimeSpin(creator,expected={delivery:"manual"}) {
   return {request,binding,result};
 }
 
+// A function a role may not call answers 42501; one 0073 removed (a retired
+// signature) is not in the API at all and answers PGRST202. Both are refusals.
+const refusedCall = (r) => r.error?.code === "42501" || r.error?.code === "PGRST202";
+
 async function signedClient(email) {
   const c = createClient(URL_, ANON, { auth: { autoRefreshToken: false, persistSession: false } });
   const { error } = await c.auth.signInWithPassword({ email, password: PW });
@@ -274,7 +278,7 @@ async function main() {
         const noOrg = await a.rpc("org_create", { p_name: "unapproved org" });
         check(!!noOrg.error, `${approval} approval prevents org creation`);
         const noImport = await a.rpc("import_fans", { p_rows: [{ fan_id: randomUUID(), pass_id: randomUUID(), token: `approval-import-${RUN}-${approval}`, wheel_id: A.wheelId, campaign_id: null, name: "unapproved import", spins: 1, amount_cents: 0 }] });
-        check(noImport.error?.code==="42501", `${approval} cannot execute the retired import API`);
+        check(refusedCall(noImport), `${approval} cannot execute the retired import API (${noImport.error?.code ?? "accepted"})`);
         const deniedRows=[{name:"Unapproved durable import",spins:1,amountCents:0,campaignId:null,wheelId:A.wheelId,error:null}];
         const noDurableImport=await fixtureCreatorRpc(admin,creatorFixtureClients.get(A.id),"import_fans_durable",{p_batch:randomUUID(),p_creator:A.id,p_actor:A.id,p_request_hash:sha(canonicalProof(["fan-import-v1",deniedRows])),p_rows:deniedRows});
         check(!noDurableImport.error&&noDurableImport.data?.status==="unavailable",`${approval} actor cannot import through the durable service gateway`);
@@ -442,8 +446,10 @@ async function main() {
       ["bootstrap_first_admin",{p_user:A.id,p_email:"a@example.test"}],
       ["set_fan_pass_game",{p_context:randomUUID(),p_creator:B.id,p_pass:B.passId,p_wheel:B.wheelId,p_actor:A.id}],
     ]) {
-      check((await a.rpc(fn,args)).error?.code==="42501",`authenticated cannot execute ${fn}`);
-      check((await createClient(URL_,ANON,{auth:{persistSession:false}}).rpc(fn,args)).error?.code==="42501",`anon cannot execute ${fn}`);
+      const asCreator=await a.rpc(fn,args);
+      check(refusedCall(asCreator),`authenticated cannot execute ${fn} (${asCreator.error?.code ?? "accepted"})`);
+      const asAnon=await createClient(URL_,ANON,{auth:{persistSession:false}}).rpc(fn,args);
+      check(refusedCall(asAnon),`anon cannot execute ${fn} (${asAnon.error?.code ?? "accepted"})`);
     }
     for(const [fn,args] of [["import_fans",{p_rows:[]}],["claim_spin",{p_token:B.token}],["credit_pass_spins",{p_fan_id:B.fanId,p_spins:1}],["finalize_reward_spin",{p_spin:{},p_expected:{}}],["reserve_reward_code",{p_prize:B.prizeId,p_spin:randomUUID()}],["release_reward_code",{p_spin:randomUUID()}]])check(!!(await admin.rpc(fn,args)).error,`service cannot execute retired ${fn}`);
     check((await admin.rpc("edit_pass_grant",{p_creator:B.id,p_grant:randomUUID(),p_spins:1,p_bonus:0,p_amount:0})).error?.code==="42501","service cannot bypass edit journal through retired positional API");
@@ -1219,7 +1225,9 @@ async function main() {
     // The 0069 two-prize game is scheduled and campaign-pinned: it keeps two prizes.
     const twoPrizes = must(await admin.from("prizes").select("id").eq("wheel_id", twoWheel.id), "0071 the chosen game's prizes");
     const prizeDrop = await a.from("prizes").delete().eq("id", twoPrizes[0].id).select("id");
-    check(prizeDrop.error?.code === "22023", `0071 a chosen game cannot drop below two prizes (${code(prizeDrop)})`);
+    // 0073 refuses a creator's direct prize delete outright (42501) before the
+    // 0071 two-prize rule (22023) is reached; either way both prizes stay.
+    check(prizeDrop.error?.code === "42501" || prizeDrop.error?.code === "22023", `0071 a chosen game cannot drop below two prizes (${code(prizeDrop)})`);
     check(((await admin.from("prizes").select("id").eq("wheel_id", twoWheel.id)).data?.length ?? 0) === 2, "0071 the chosen game still has both prizes");
     // Campaigns are deleted through delete_campaign (fan -> link -> campaign).
     const pinnedCampaign = campaignOnTwo.data?.[0]?.id;
@@ -1425,7 +1433,9 @@ async function main() {
     // A's first link was self-excluded by the 0068 checks above, so a fresh
     // fan and link stand for "live" here and A.token for "exists, unavailable".
     const liveFan = must(await admin.from("fans").insert({ creator_id: A.id, display_name: `live ${RUN}`, acked_at: new Date().toISOString(), acked_terms_version: LEGAL_VERSION }).select("id").single(), "0073 a fan for a live link");
-    const liveLink = must(await fixtureCreatorRpc(admin, creatorFixtureClients.get(A.id), "create_pass_grant", { p_request: randomUUID(), p_creator: A.id, p_fan: liveFan.id, p_wheel: A.wheelId, p_name: `live ${RUN}`, p_spins: 5, p_bonus: 0, p_amount: 1000, p_campaign: null }), "0073 a live link");
+    // A enrolled two-factor through `a` in the 0062 checks, and Auth signed out
+    // A's other sessions then, including its first fixture session.
+    const liveLink = must(await fixtureCreatorRpc(admin, a, "create_pass_grant", { p_request: randomUUID(), p_creator: A.id, p_fan: liveFan.id, p_wheel: A.wheelId, p_name: `live ${RUN}`, p_spins: 5, p_bonus: 0, p_amount: 1000, p_campaign: null }), "0073 a live link");
     check(liveLink.status === "granted" && typeof liveLink.token === "string", `0073 the live link is minted (${liveLink.status})`);
     const liveToken = await admin.rpc("get_spin_attempt_status", { p_attempt: randomUUID(), p_token: liveLink.token, p_request_hash: "a".repeat(64) });
     check(liveToken.data?.status === "absent", `0073 a status read for a live link without that attempt is absent (${liveToken.error?.message ?? JSON.stringify(liveToken.data)})`);
