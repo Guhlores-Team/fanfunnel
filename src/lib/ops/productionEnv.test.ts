@@ -62,6 +62,8 @@ function main() {
   check("Vercel Production build → checked", isProductionBuild({ VERCEL_ENV: "production" }, build) && isProductionBuild({ VERCEL_ENV: "production", NEXT_PHASE: "phase-production-build" }, ["node", "x"]));
   check("self-hosted production build → checked", isProductionBuild({ FF_REQUIRE_SUPABASE: "1" }, build));
   check("Preview build → not checked", !isProductionBuild({ VERCEL_ENV: "preview" }, build));
+  check("Preview build on the TEST database (FF_REQUIRE_SUPABASE=1) → not checked", !isProductionBuild({ VERCEL_ENV: "preview", FF_REQUIRE_SUPABASE: "1" }, build) && !isProductionBuild({ VERCEL_ENV: "development", FF_REQUIRE_SUPABASE: "1" }, build));
+  check("Vercel Production with FF_REQUIRE_SUPABASE=1 → checked", isProductionBuild({ VERCEL_ENV: "production", FF_REQUIRE_SUPABASE: "1" }, build));
   check("local / CI build → not checked", !isProductionBuild({}, build) && !isProductionBuild({ CI: "true", GITHUB_ACTIONS: "true" }, build));
   check("next start / next dev on Production → not checked (the runtime guard in supabase/server.ts applies)", !isProductionBuild({ VERCEL_ENV: "production" }, ["node", "/x/next", "start"]) && !isProductionBuild({ VERCEL_ENV: "production" }, ["node", "/x/next", "dev"]));
   const cfg = readFileSync(new URL("../../../next.config.ts", import.meta.url), "utf8");

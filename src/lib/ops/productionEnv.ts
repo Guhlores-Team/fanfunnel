@@ -87,11 +87,13 @@ export function describeEnvProblems(problems: EnvProblem[]): string {
 
 /**
  * True for a `next build` of the live site: Vercel's Production scope
- * (VERCEL_ENV=production) or a self-hosted production (FF_REQUIRE_SUPABASE=1).
+ * (VERCEL_ENV=production) or a self-hosted production (FF_REQUIRE_SUPABASE=1
+ * off Vercel). On Vercel, VERCEL_ENV decides: a Preview also sets
+ * FF_REQUIRE_SUPABASE=1 to use the TEST database and is not the live site.
  * Previews, local builds, CI, `next start` and `next dev` are never checked.
  */
 export function isProductionBuild(env: Env = process.env, argv: readonly string[] = process.argv): boolean {
-  const production = env.VERCEL_ENV === "production" || env.FF_REQUIRE_SUPABASE === "1";
+  const production = env.VERCEL_ENV ? env.VERCEL_ENV === "production" : env.FF_REQUIRE_SUPABASE === "1";
   const building = env.NEXT_PHASE === "phase-production-build" || argv.slice(2).includes("build");
   return production && building;
 }
