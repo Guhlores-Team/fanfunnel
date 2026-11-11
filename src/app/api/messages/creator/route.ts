@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import { sendCreatorMessage } from "@/lib/data";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
-import { clientIp, rateLimitOr429 } from "@/lib/api/limit";
+import { clientIp } from "@/lib/api/clientIp";
+import { rateLimitOr429 } from "@/lib/api/limit";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { ValidationError, str } from "@/lib/api/validate";
 
-// The creator replies to a fan in the drawer/inbox (RLS-scoped).
+// The creator replies to a fan in the drawer/inbox (RLS-scoped). A19: an
+// optional `creatorId` replies for a creator the caller's seat may chat for.
 export async function POST(req: Request) {
-  const body = await parseJsonBody<{ fanId?: string; body?: string }>(req);
+  const body = await parseJsonBody<{ fanId?: string; body?: string; creatorId?: unknown }>(req);
   if (body === BAD_REQUEST) return badRequest();
 
   let fanId: string;
@@ -34,7 +36,7 @@ export async function POST(req: Request) {
   const limited = await rateLimitOr429("creatormsg:" + rlKey, 10, 60_000);
   if (limited) return limited;
 
-  const result = await sendCreatorMessage(fanId, text);
+  const result = await sendCreatorMessage(fanId, text, body.creatorId);
   if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);
 }

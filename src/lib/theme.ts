@@ -14,8 +14,8 @@
 
 import type { CSSProperties } from "react";
 
-/** App's darkest surface (globals.css --color-base) — what brand-as-text sits on. */
-const APP_BASE = "#0c0a0e";
+/** App's darkest surface (globals.css --color-canvas) — what brand-as-text sits on. */
+export const APP_BASE = "#0c0a0e";
 /** Fallback brand if a creator's value is missing/invalid (globals.css default). */
 export const DEFAULT_BRAND = "#ec4899";
 
@@ -25,8 +25,11 @@ export interface RGB {
   b: number;
 }
 
-const BLACK: RGB = { r: 17, g: 17, b: 17 }; // #111
 const WHITE: RGB = { r: 255, g: 255, b: 255 };
+/** Dark ink for text/icons on a brand fill (design token #160d12). Chosen over
+ *  pure black so the ink carries a faint plum warmth matching the app surface. */
+export const DARK_INK = "#160d12";
+const DARK_INK_RGB: RGB = { r: 0x16, g: 0x0d, b: 0x12 };
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
@@ -45,7 +48,7 @@ export function parseHex(input: string | null | undefined): RGB | null {
   };
 }
 
-function toHex({ r, g, b }: RGB): string {
+export function toHex({ r, g, b }: RGB): string {
   const h = (n: number) => Math.round(clamp(n, 0, 255)).toString(16).padStart(2, "0");
   return `#${h(r)}${h(g)}${h(b)}`;
 }
@@ -68,31 +71,35 @@ export function contrastRatio(a: RGB, b: RGB): number {
 }
 
 /**
- * #fff or #111 — whichever is readable as text ON the given fill color.
+ * `#ffffff` or {@link DARK_INK} (`#160d12`) — whichever has the HIGHER WCAG
+ * contrast as text/icons ON the given brand fill.
  *
- * --brand-ink labels large, bold text on the brand fill (buttons), so AA-large
- * (3:1) is the bar. We prefer white (the established brand look) whenever it
- * clears that bar, and only fall back to dark text when white would be too faint
- * (e.g. a light-yellow brand). This keeps the default pink button white while
- * fixing the genuinely unreadable cases.
+ * `--brand` is creator-customizable, so a fixed white foreground fails WCAG on
+ * light brand colors — this is the tracked 3.52:1 white-on-brand defect (the
+ * default pink `#ec4899` is exactly that case). Picking the max-contrast ink
+ * flips pink to dark `#160d12` (~6:1, passes AA for normal text), while deep
+ * brand colors still resolve to white. Ties prefer white (the brand look).
+ *
+ * Use this for ALL text/icons on a `--brand` fill (buttons, badges, pills,
+ * toggles); it backs the `--brand-ink` CSS var via {@link brandVars}.
  */
 export function readableInk(color: string): string {
   const rgb = parseHex(color) ?? parseHex(DEFAULT_BRAND)!;
-  const cWhite = contrastRatio(rgb, WHITE);
-  const cBlack = contrastRatio(rgb, BLACK);
-  if (cWhite >= 3) return "#ffffff";
-  return cBlack > cWhite ? "#111111" : "#ffffff";
+  return contrastRatio(rgb, WHITE) >= contrastRatio(rgb, DARK_INK_RGB)
+    ? "#ffffff"
+    : DARK_INK;
 }
 
 /**
  * The brand color adjusted so it's legible as TEXT on the dark app surface.
- * Returns it unchanged when it already meets `min` contrast on --color-base;
+ * Returns it unchanged when it already meets `min` contrast on --color-canvas;
  * otherwise mixes it toward white (preserving hue) until it does. This is what
  * fixes brand-colored accent text (odds, weights, ×multiplier) going invisible
- * when a creator picks a dark brand color.
+ * when a creator picks a dark brand color. `surface` defaults to the app base;
+ * a themed page passes its lightest background colour (creatorTheme/tokens.ts).
  */
-export function brandText(color: string, min = 4.5): string {
-  const base = parseHex(APP_BASE)!;
+export function brandText(color: string, min = 4.5, surface: string = APP_BASE): string {
+  const base = parseHex(surface) ?? parseHex(APP_BASE)!;
   const rgb = parseHex(color) ?? parseHex(DEFAULT_BRAND)!;
   if (contrastRatio(rgb, base) >= min) return toHex(rgb);
   for (let t = 0.1; t <= 1.0001; t += 0.1) {
@@ -106,17 +113,69 @@ export function brandText(color: string, min = 4.5): string {
   return "#ffffff";
 }
 
+/** PA-01: the least contrast a brand color needs against the dark page (WCAG 1.4.11, UI parts and focus rings). */
+export const MIN_BRAND_UI_CONTRAST = 3;
+
+/**
+ * PA-01: whether a brand color can be seen on the dark app base as it is.
+ * Nothing is refused for darkness: any valid hex saves, and the fan page
+ * paints `--brand-ui` (the color lifted to 3:1, see `brandUi`) wherever the
+ * raw color would vanish. This is a pure helper that drives the editor's and
+ * Settings' non-blocking hint. Anything that is not a hex color is not ok.
+ */
+export function brandColorContrastOk(hex: string | null | undefined): boolean {
+  return checkBrandColor(hex).ok;
+}
+
+/** Creator-facing, non-blocking hint for a very dark brand color (it still saves). */
+export const BRAND_DARK_HINT = "This color is very dark; buttons and outlines will be shown in a lighter shade so fans can see them.";
+
 /**
  * CSS custom properties to spread into a `style={}` so brand text stays readable.
  * Use everywhere we currently write `style={{ "--brand": color }}`.
  *
  *   <div style={brandVars(creator.brandColor)}>…</div>
  */
-export function brandVars(color: string | null | undefined): CSSProperties {
+export function brandVars(color: string | null | undefined, surface?: string): CSSProperties {
   const safe = parseHex(color) ? (color as string) : DEFAULT_BRAND;
+  const ui = brandUi(safe, surface);
   return {
     ["--brand"]: safe,
-    ["--brand-ink"]: readableInk(safe),
-    ["--brand-text"]: brandText(safe),
+    // The ink sits on the fill that is actually painted (`--brand-ui`).
+    ["--brand-ink"]: readableInk(ui),
+    ["--brand-text"]: brandText(safe, 4.5, surface),
+    ["--brand-ui"]: ui,
   } as CSSProperties;
+}
+
+/** WCAG 1.4.11: non-text UI (focus rings, borders, button fills) needs 3:1 against its surface. */
+export const UI_CONTRAST_MIN = MIN_BRAND_UI_CONTRAST;
+
+/**
+ * PA-01: the brand colour as it may be used for NON-TEXT UI on the page
+ * surface: focus rings, input borders, the SPIN button fill, the wheel hub and
+ * the visit-glow rings. A near-black brand on the near-black page gave a
+ * 1.0:1 focus ring (keyboard focus invisible) and a button that looked
+ * disabled; this pushes such a colour toward white until it reaches 3:1,
+ * and leaves every ordinary brand colour untouched.
+ */
+export function brandUi(color: string, surface: string = APP_BASE): string {
+  return brandText(color, UI_CONTRAST_MIN, surface);
+}
+
+/**
+ * The one brand-colour measure: whether a colour can be painted as UI on the
+ * page as is (`brandColorContrastOk` is its yes/no). `uiColor` is what the
+ * fan page paints when it cannot (the colour pushed to 3:1), so the creator
+ * can be told honestly. A verdict, never a refusal.
+ */
+export function checkBrandColor(color: string | null | undefined, surface: string = APP_BASE): { ok: boolean; ratio: number; uiColor: string; reason: string | null } {
+  const rgb = parseHex(color);
+  if (!rgb) return { ok: false, ratio: 0, uiColor: DEFAULT_BRAND, reason: "not a hex colour" };
+  const base = parseHex(surface) ?? parseHex(APP_BASE)!;
+  const exact = contrastRatio(rgb, base);
+  const ratio = Math.round(exact * 100) / 100;
+  const uiColor = brandUi(toHex(rgb), surface);
+  const ok = exact >= MIN_BRAND_UI_CONTRAST;
+  return { ok, ratio, uiColor, reason: ok ? null : `too dark on the dark theme (${ratio}:1; buttons and focus rings need ${MIN_BRAND_UI_CONTRAST}:1), fans will see ${uiColor}` };
 }

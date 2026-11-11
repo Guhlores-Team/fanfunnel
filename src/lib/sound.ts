@@ -104,6 +104,60 @@ export function playWin(rarity: string) {
   notes.forEach((f, i) => {
     setTimeout(() => blip(f, 0.18, "triangle", 0.12), i * 90);
   });
+  // Rare: a soft sustained pad under the arpeggio so it reads above uncommon.
+  if (rarity === "rare") {
+    [262, 330, 392].forEach((f) => swell(f, 0.12, 0.7, "sine", 0.045));
+  }
+}
+
+/** A tone with a slow attack and release (pads, swells, the rumble). */
+function swell(
+  freq: number,
+  attack: number,
+  release: number,
+  type: OscillatorType,
+  gain: number,
+  endFreq?: number
+) {
+  const ac = audio();
+  if (!ac) return;
+  const schedule = () => {
+    try {
+      const osc = ac.createOscillator();
+      const g = ac.createGain();
+      const t0 = ac.currentTime;
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, t0);
+      if (endFreq) osc.frequency.exponentialRampToValueAtTime(endFreq, t0 + attack + release);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(gain, t0 + attack);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + attack + release);
+      osc.connect(g).connect(ac.destination);
+      osc.start();
+      osc.stop(t0 + attack + release + 0.05);
+    } catch {
+      /* never let a sound failure break the game */
+    }
+  };
+  if (ac.state === "suspended") {
+    ac.resume().then(schedule).catch(() => {});
+  } else {
+    schedule();
+  }
+}
+
+/**
+ * Reveal theater (RM-1): the build-up under the wheel's last second. "swell"
+ * is a low rising tone (epic); "rumble" is a sub-bass hold (legendary).
+ * Callers gate this on the fan's mute setting, as with every other sound.
+ */
+export function playBuildUp(kind: "none" | "swell" | "rumble") {
+  if (kind === "swell") {
+    swell(196, 0.8, 0.5, "triangle", 0.06, 294);
+  } else if (kind === "rumble") {
+    swell(46, 0.9, 0.7, "sine", 0.22);
+    swell(55, 0.9, 0.7, "sine", 0.14);
+  }
 }
 
 /** The big-win jackpot fanfare for epic (and, grander, legendary) prizes. */

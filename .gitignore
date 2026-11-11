@@ -46,7 +46,8 @@ next-env.d.ts
 .agents/
 skills-lock.json
 
-# multi-review loop artifacts (review logs, round JSON, PLAN.md)
+# multi-review loop artifacts (review logs, round JSON, PLAN.md). SC-10: the
+# three 2026-06-17 reports were tracked despite this rule and are untracked.
 reviews/
 # claude code agent worktrees + local state
 .claude/worktrees/

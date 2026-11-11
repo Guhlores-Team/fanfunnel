@@ -1,30 +1,35 @@
 import { NextResponse } from "next/server";
+import { withFanMissLimit } from "@/lib/api/fanMiss";
 import { addWishlist, removeWishlist } from "@/lib/data";
-import { clientIp, rateLimitOr429 } from "@/lib/api/limit";
+import { clientIp } from "@/lib/api/clientIp";
+import { rateLimitOr429 } from "@/lib/api/limit";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { ValidationError, str } from "@/lib/api/validate";
 
 // A fan flags / un-flags a prize they're chasing. Token-gated (fans aren't authed).
 export async function POST(req: Request) {
-  return mutate(req, addWishlist);
+  return withFanMissLimit(req, () => mutate(req, addWishlist));
 }
 
 export async function DELETE(req: Request) {
-  return mutate(req, removeWishlist);
+  return withFanMissLimit(req, () => mutate(req, removeWishlist));
 }
 
 async function mutate(
   req: Request,
-  fn: (token: string, prizeLabel: string) => Promise<{ ok: true } | { error: string }>
+  fn: (token: string, prizeLabel: string, prizeId: string | null) => Promise<{ ok: true } | { error: string }>
 ) {
-  const body = await parseJsonBody<{ token?: string; prizeLabel?: string }>(req);
+  const body = await parseJsonBody<{ token?: string; prizeLabel?: string; prizeId?: string }>(req);
   if (body === BAD_REQUEST) return badRequest();
 
   let token: string;
   let prizeLabel: string;
+  let prizeId: string | null;
   try {
     token = str(body.token, { max: 200, required: true })!;
     prizeLabel = str(body.prizeLabel, { max: 200, required: true })!;
+    // RF-15: optional; the label alone is ambiguous when two prizes share it.
+    prizeId = str(body.prizeId, { max: 64 }) ?? null;
   } catch (e) {
     if (e instanceof ValidationError) return badRequest(e.code);
     throw e;
@@ -34,7 +39,7 @@ async function mutate(
   const limited = await rateLimitOr429("wish:" + token + ":" + clientIp(req), 30, 60_000);
   if (limited) return limited;
 
-  const result = await fn(token, prizeLabel);
+  const result = await fn(token, prizeLabel, prizeId);
   if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);
 }

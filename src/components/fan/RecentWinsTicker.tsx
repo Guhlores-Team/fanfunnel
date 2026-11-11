@@ -1,8 +1,11 @@
 "use client";
 
+import { brandText } from "@/lib/theme";
+
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import type { Rarity } from "@/lib/games/wheel/types";
 import { useFetch } from "@/lib/hooks/useFetch";
+import { FAN_CLIENT_HEADER } from "@/lib/api/fanClientHeader";
 
 interface Win {
   handle: string;
@@ -18,9 +21,12 @@ interface Win {
  */
 export default function RecentWinsTicker({
   creatorId,
+  token,
   refreshKey = 0,
 }: {
   creatorId: string;
+  /** The fan link's token: only keys the per-fan rate limit, never the response. */
+  token?: string;
   /** Bump to refetch immediately (e.g. right after the fan's own spin). */
   refreshKey?: number;
 }) {
@@ -34,6 +40,7 @@ export default function RecentWinsTicker({
     {
       pollMs: 20000,
       refreshOnVisible: false,
+      ...(token ? { headers: { [FAN_CLIENT_HEADER]: token } } : {}),
       select: (raw) => (raw as { wins?: Win[] }).wins ?? [],
     }
   );
@@ -63,7 +70,7 @@ export default function RecentWinsTicker({
               <span className="h-1.5 w-1.5 rounded-full" style={{ background: c }} />
               <span className="font-semibold text-ink">@{w.handle}</span>
               <span>won</span>
-              <span className="font-medium" style={{ color: c }}>
+              <span className="font-medium" style={{ color: brandText(c, 4.5) }}>
                 {w.prizeLabel}
               </span>
             </span>

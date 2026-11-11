@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { mockCreatePass, mockGetFanPass } from "./mock";
+import { mockCreatePass, mockGetFanPass, mockListFans } from "./mock";
 
 // Regression: a referral bonus must land on a SPENDABLE pass, so the balance the
 // fan sees equals what they can actually spin. The old behavior added the bonus
@@ -47,6 +47,14 @@ async function main() {
   //    this stayed at 4 because the bonus only touched the aggregate.)
   const referrerAfter = mustView(await mockGetFanPass(referrer.token), "referrer-after");
   check("referrer's bonus is spendable on the pass", referrerAfter.spinsRemaining === 7);
+
+  // 5. Invariant: each fan's aggregate equals the sum of its passes.
+  const both = mockListFans().filter((x) => [referrer.fanId, referred.fanId].includes(x.fanId));
+  check("both fans are listed", both.length === 2);
+  for (const f of both) {
+    const sum = f.passes.reduce((s, p) => s + p.spinsRemaining, 0);
+    check(`fans == SUM(passes) for ${f.name}`, f.spinsRemaining === sum);
+  }
 
   console.log(`referralIntegrity.test: ${passed} checks passed`);
 }

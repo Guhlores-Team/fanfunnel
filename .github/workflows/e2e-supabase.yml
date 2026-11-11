@@ -4,36 +4,124 @@ name: E2E (real Supabase)
 # tenant isolation + the SECURITY DEFINER self-update RPCs. These can't run in
 # mock mode, so they live in their own workflow gated on repo secrets.
 #
-# The test self-skips (exit 0) when the secrets are absent, so this workflow is
-# a harmless no-op until you add them. To enable, set these repo secrets to a
-# DEDICATED test/preview Supabase project (NOT production — the test creates and
-# deletes ephemeral users):
+# A25: missing secrets FAIL this job (scripts/ci/supabase-secrets-gate.mjs).
+# The only skip is a pull request from a fork, where GitHub withholds secrets by
+# design; it is announced with a warning annotation and a job-summary line, and
+# the gated steps show as skipped. Set these repo secrets to a DEDICATED
+# test/preview Supabase project (NOT production — the test creates and deletes
+# ephemeral users), and the same names as Dependabot secrets for Dependabot PRs:
 #   NEXT_PUBLIC_SUPABASE_URL
 #   NEXT_PUBLIC_SUPABASE_ANON_KEY
 #   SUPABASE_SERVICE_ROLE_KEY
 # and apply supabase/schema.sql (incl. the latest migration) to that project first.
+# On PRs that change migrations, the job first waits for supabase-migrations.yml
+# to apply them to the TEST project. It also runs the RLS runtime negative test
+# (scripts/security/rls-runtime-test.mjs), which is pinned to the TEST project.
 
 on:
   push:
     branches: [main]
   pull_request:
-  workflow_dispatch: # lets you run it on demand from the Actions tab
+  workflow_dispatch:
+    inputs:
+      test_maintenance_action:
+        description: "Optional TEST-only maintenance operation; setup only after verified 0063 Preview"
+        type: choice
+        options: ["off", "status", "setup"]
+        default: "off"
+      maintenance_expected_sha:
+        description: "Exact 40-character verified dashboard-redesign commit (required for maintenance)"
+        type: string
+        required: false
+
+# SUP-4: least privilege for the job token; a job that needs more says so.
+permissions:
+  contents: read
 
 jobs:
   supabase:
     runs-on: ubuntu-latest
+    # SC-06: the migration wait is capped at 15 min inside the job; the whole
+    # job never holds a runner for the 360 min default.
+    timeout-minutes: 30
+    # Read-only token: the migration wait below only lists PR files and runs.
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
 
+      # A25: fail when the TEST secrets are missing; skip (visibly) only on a
+      # fork PR. Only presence booleans reach the gate, never secret values.
+      - name: Require TEST Supabase secrets (fork PRs skip visibly)
+        id: supabase-secrets
+        env:
+          GATE_JOB: Real-Supabase + RLS runtime tests
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REF: ${{ github.ref }}
+          BASE_REF: ${{ github.base_ref }}
+          ACTOR: ${{ github.actor }}
+          HAS_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL != '' }}
+          HAS_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY != '' }}
+          HAS_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        run: node scripts/ci/supabase-secrets-gate.mjs
+
       - name: Install dependencies
+        if: steps.supabase-secrets.outputs.run == 'true'
         run: npm ci
 
-      - name: Real-Supabase integration tests — RLS + RPCs (skips if secrets unset)
+      # The tests below must see this PR's schema. When the PR changes
+      # migrations, supabase-migrations.yml applies them to the TEST project in
+      # a separate run; wait for that run (same head SHA) to succeed first.
+      - name: Wait for this PR's migrations to reach the TEST project
+        if: github.event_name == 'pull_request' && steps.supabase-secrets.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          HAS_SECRETS: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_SECRETS" != "true" ]; then
+            echo "::error title=TEST secrets missing::SUPABASE_SERVICE_ROLE_KEY is unset although the secrets gate passed."
+            exit 1
+          fi
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')
+          if ! grep -qE '^supabase/(migrations/|config\.toml$)' <<<"$files"; then
+            echo "This PR changes no migrations — nothing to wait for."
+            exit 0
+          fi
+          deadline=$((SECONDS + 900))
+          while :; do
+            state=$(gh api "repos/$REPO/actions/workflows/supabase-migrations.yml/runs?head_sha=$SHA&event=pull_request&per_page=1" \
+              --jq '.workflow_runs[0] | "\(.status // "none") \(.conclusion // "none")"')
+            echo "Supabase migrations run for $SHA: $state"
+            case "$state" in
+              "completed success") exit 0 ;;
+              completed*)
+                echo "::error title=TEST migrations failed::The Supabase migrations run for this commit did not succeed, so the TEST project is not on this PR's schema."
+                exit 1 ;;
+            esac
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error title=TEST migrations not applied::Timed out after 15 min waiting for the Supabase migrations run for $SHA (is the 'test' environment waiting for approval?)."
+              exit 1
+            fi
+            sleep 20
+          done
+
+      - name: Real-Supabase integration tests — RLS + RPCs
+        if: steps.supabase-secrets.outputs.run == 'true'
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
@@ -41,8 +129,80 @@ jobs:
         run: npm run e2e:supabase
 
       - name: Real-Supabase spin-integrity (double-spend) test
+        if: steps.supabase-secrets.outputs.run == 'true'
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: npm run e2e:spin
+
+      # AGENTS.md's runtime negative test: cross-tenant isolation + a creator
+      # cannot promote itself to admin. Fails the check on any leak. Refuses to
+      # run against anything but the TEST project (the script also hard-refuses
+      # the prod ref).
+      - name: RLS runtime test — tenant isolation + no self-promotion (TEST project)
+        if: steps.supabase-secrets.outputs.run == 'true'
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RLS_TEST_REQUIRE_REF: snmcrmhgevfqggxdiomu
+        run: |
+          if [ -z "$NEXT_PUBLIC_SUPABASE_URL" ] || [ -z "$NEXT_PUBLIC_SUPABASE_ANON_KEY" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error title=RLS runtime test cannot run::NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY unset — a missing secret is a failure, not a pass."
+            exit 1
+          fi
+          case "$NEXT_PUBLIC_SUPABASE_URL" in
+            *ttlogfmogcccwiraaoae*)
+              echo "::error title=Refusing prod::NEXT_PUBLIC_SUPABASE_URL points at the PRODUCTION project. This job must target the TEST project."
+              exit 1 ;;
+          esac
+          node scripts/security/rls-runtime-test.mjs
+          npx tsx scripts/security/link-session-runtime-test.mjs
+
+  test-maintenance:
+    # Existing Supabase/RLS/spin tests above always run unchanged, including
+    # manual dispatches. This optional job never replaces or skips their gate.
+    if: github.event_name == 'workflow_dispatch' && inputs.test_maintenance_action != 'off'
+    needs: supabase
+    runs-on: ubuntu-latest
+    # SC-02: the account-wide Supabase token, VERCEL_TOKEN and the TEST cron
+    # secret live in their own environment (required reviewer, Deployment
+    # branches = dashboard-redesign only), never in `test`, whose secrets any
+    # PR job can reach. Until the owner creates it (docs/GO_LIVE.md section
+    # 2) GitHub auto-creates an empty one and the guards refuse to run.
+    environment: test-maintenance
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    concurrency:
+      group: fanfunnel-test-maintenance
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Test maintenance guards with fake APIs only
+        run: node scripts/ops/test-maintenance.test.mjs
+      - name: Guard exact Preview and set up or inspect TEST maintenance
+        env:
+          TEST_MAINTENANCE_ACTION: ${{ inputs.test_maintenance_action }}
+          MAINTENANCE_EXPECTED_SHA: ${{ inputs.maintenance_expected_sha }}
+          SUPABASE_TEST_PROJECT_REF: snmcrmhgevfqggxdiomu
+          TEST_MAINTENANCE_ORIGIN: https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          FANFUNNEL_TEST_CRON_SECRET: ${{ secrets.FANFUNNEL_TEST_CRON_SECRET }}
+        run: node scripts/ops/test-maintenance.mjs
+      - name: Save redacted TEST maintenance evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-maintenance-${{ github.run_id }}
+          path: artifacts/test-maintenance-status.json
+          if-no-files-found: error
+          retention-days: 7

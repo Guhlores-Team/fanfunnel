@@ -8,9 +8,22 @@ on:
     branches: [main]
   pull_request:
 
+# SC-12: a newer push to the same PR branch cancels the build + e2e queued
+# for the older commit; pushes to main are never cancelled (each one is a
+# release candidate whose checks Vercel may wait on).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# SUP-4: least privilege for the job token; a job that needs more says so.
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # SC-06: build + mock e2e + a11y take ~15 min; never the 360 min default.
+    timeout-minutes: 45
     # The in-app debug console is only compiled in when NEXT_PUBLIC_ENABLE_DEBUG=1
     # (N9 keeps it out of prod). The mock e2e drives it to assert zero console
     # errors across the creator flow, so enable it for this test build — otherwise
@@ -18,9 +31,11 @@ jobs:
     env:
       NEXT_PUBLIC_ENABLE_DEBUG: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -37,14 +52,38 @@ jobs:
       - name: Test (unit + RLS security lint)
         run: npm test
 
+      # Workflow guards and pure script tests under scripts/ (npm test covers
+      # src/ only): A25 secrets gate, A39 DB-before-code check, A38 carry-over
+      # refusals and planner, TEST maintenance guards, A26 stress-harness plumbing,
+      # batch-6 supply-chain pins (SHA-pinned actions, token scope, vercel.json),
+      # batch-7 job timeouts, the SC-07 migration-test gate, the SC-01 LIVE
+      # backup gate and the env-var inventory (.env.example vs src/).
+      # No network, no secrets.
+      - name: Script and workflow-guard tests
+        run: |
+          node scripts/test/ci-secrets-gate.test.mjs
+          node scripts/test/db-before-code.test.mjs
+          node scripts/test/workflow-supply-chain.test.mjs
+          node scripts/test/migration-test-gate.test.mjs
+          node scripts/test/prod-backup-gate.test.mjs
+          node scripts/test/env-inventory.test.mjs
+          node scripts/golive/carry-over.test.mjs
+          node scripts/ops/test-maintenance.test.mjs
+          node --test scripts/stress/harness.test.mjs
+
       - name: Build
         run: npm run build
 
+      # ubuntu-latest is 26.04: needs playwright >= 1.61 (first release supporting it).
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
       - name: E2E + a11y (mock mode)
         run: |
+          # Throwaway VAPID keys, generated per run and never stored, so the web
+          # push journey runs end to end against the demo's simulated push
+          # service (e2e/push.mjs). Without them it covers the push-off state.
+          eval "$(node -e 'const k=require("web-push").generateVAPIDKeys();console.log(`export VAPID_PUBLIC_KEY=${k.publicKey} VAPID_PRIVATE_KEY=${k.privateKey} VAPID_SUBJECT=mailto:ci@example.invalid`)')"
           npx next start -p 3000 &
           SERVER_PID=$!
           for i in $(seq 1 30); do
@@ -61,8 +100,54 @@ jobs:
 
       - name: Upload E2E artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-artifacts
           path: e2e/artifacts/
           if-no-files-found: ignore
+
+  # DEBT-7: the three hand-maintained SQL build artifacts must build the same DB.
+  # Uses the PostgreSQL 16 binaries preinstalled on the runner image; the full
+  # history is needed because the reference build starts from the original
+  # schema.sql (see scripts/db/README.md).
+  schema-drift:
+    # Pinned for its preinstalled PostgreSQL 16 binaries (the drift check builds
+    # throwaway clusters with initdb/pg_ctl), not for Playwright.
+    runs-on: ubuntu-24.04
+    # SC-06: three throwaway clusters + probes take ~10 min.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      # The 0062 creator-route probe and the Bingo proof fixture run app modules
+      # through tsx (scripts/test-preload.mjs mocks `server-only`), so the drift
+      # check needs the project's dependencies, not just Node.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: schema.sql / migrations_combined.sql / migrations build the same DB
+        run: node scripts/db/schema-drift-check.mjs
+
+      # A38: the go-live carry-over tool against two disposable local databases
+      # built from supabase/schema.sql. Never touches a hosted project.
+      - name: Go-live carry-over against disposable Postgres
+        run: node scripts/golive/carry-over.db.test.mjs
+
+      # TEST maintenance scheduler SQL contract (scripts/ops) on disposable
+      # Postgres; e2e-supabase.yml only runs its pure guard test.
+      - name: TEST maintenance SQL contract against disposable Postgres
+        shell: bash
+        run: |
+          set -euo pipefail
+          PG_BIN="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
+          export PG_BIN
+          "$PG_BIN/postgres" --version
+          node scripts/ops/test-maintenance-db.test.mjs

@@ -7,8 +7,27 @@
 // and needs no external services: perfect for CI.
 
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync, writeSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+
+/** localStorage key of a fan link's saved spin request (src/components/fan/spinIntent.ts). */
+export const spinIntentKey = (token) => "ff-spin-intent-v1:" + createHash("sha256").update(token).digest("hex");
+
+/**
+ * After the win card closes on a /spin/<token> page, resolve once the page has
+ * acknowledged that spin: closing clears the saved spin request under a Web
+ * Lock while router.refresh() runs (measured 50-100ms after the click, well
+ * after the card is hidden). A navigation that beats that write finds the
+ * request still saved, re-presents the same spin as recovered and keeps SPIN
+ * locked (the product's durable-recovery contract), so a following step's
+ * SPIN click waits out its whole timeout.
+ */
+export async function waitForSpinAcknowledged(page, timeout = 4000) {
+  const token = /^\/spin\/([^/?#]+)/.exec(new URL(page.url()).pathname)?.[1];
+  if (!token) throw new Error(`not on a fan page (${page.url()})`);
+  await page.waitForFunction((key) => localStorage.getItem(key) === null, spinIntentKey(decodeURIComponent(token)), { timeout });
+}
 
 /** Synchronous stdout write — survives process.exit() even when stdout is a
  *  pipe (CI), unlike the async console.log buffer. */
@@ -21,6 +40,26 @@ export const BASE = process.env.E2E_BASE_URL || `http://localhost:${PORT}`;
 // fileURLToPath (not .pathname) so Windows gets `C:\...\artifacts\` rather than
 // the broken `/C:/...` that .pathname yields, which breaks mkdir/writeFile.
 export const ARTIFACTS = fileURLToPath(new URL("./artifacts/", import.meta.url));
+
+/**
+ * Fixture setup only: respect the real age-acknowledgement IP limit when many
+ * independent accessibility states share one server. The application returns
+ * Retry-After as positive integer seconds. Never retry another status, guess a missing
+ * delay, change identity, or hide a refusal from the caller's existing checks.
+ */
+export async function acknowledgeFixtureFan(request, token, { wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
+  const post = () => request.post(BASE + "/api/fans/ack", { data: { token } });
+  let response = await post();
+  for (let retry = 0; response.status() === 429 && retry < 2; retry++) {
+    const header = response.headers()["retry-after"];
+    if (typeof header !== "string" || !/^\d+$/.test(header.trim())) return response;
+    const seconds = Number(header.trim());
+    if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 60) return response;
+    await wait(seconds * 1000);
+    response = await post();
+  }
+  return response;
+}
 
 /** Start `next start` and resolve once it answers 200 (unless E2E_BASE_URL is
  *  provided, in which case we assume a server is already running). */
@@ -106,9 +145,9 @@ const benignConsole = (text) => {
 };
 
 /** Attach listeners to a page; returns a sink whose `.step` you set before each
- *  action so captured signals are attributed to it. */
-export function attachSink(page) {
-  const sink = { step: "boot", signals: [] };
+ *  action so captured signals are attributed to it. Pass an existing sink to
+ *  collect a second page (e.g. the phone-viewport journey) into the same report. */
+export function attachSink(page, sink = { step: "boot", signals: [] }) {
   const push = (kind, detail) =>
     sink.signals.push({ step: sink.step, kind, detail: String(detail).slice(0, 240) });
 
@@ -127,6 +166,22 @@ export function attachSink(page) {
       push("http", `${r.status()} ${r.request().method()} ${r.url().replace(BASE, "")}`);
   });
   return sink;
+}
+
+/** Load axe-core into the page. Not addScriptTag: an inline <script> without
+ *  the response's nonce is (correctly) refused by the signed-in pages' CSP.
+ *  DevTools evaluation is outside the page's policy. */
+export async function injectAxe(page, axeSrc) {
+  await page.evaluate(axeSrc);
+}
+
+/** Collect the browser's CSP violation reports for a page (they are console
+ *  errors). Suites without the error sink use this to fail on any violation. */
+export function watchCsp(page, list) {
+  page.on("console", (m) => {
+    if (/content security policy/i.test(m.text())) list.push(`${page.url().replace(BASE, "")}: ${m.text().slice(0, 240)}`);
+  });
+  return list;
 }
 
 // ---- step + assertion plumbing --------------------------------------------
@@ -204,22 +259,50 @@ export async function goto(page, path, settle = 1400) {
   await page.waitForTimeout(settle);
 }
 
+// Dashboard section nav. Items are buttons inside the visible "Dashboard
+// sections" <nav> — the sidebar from `lg`, the bottom tab bar below it — and the
+// active one carries aria-current="page". The phone bar's "More" button (it
+// opens the More sheet, aria-haspopup) is not a section item.
+export const NAV_ITEMS = "nav[aria-label='Dashboard sections']:visible button:not([aria-haspopup])";
+export const MORE_BUTTON = "nav[aria-label='Dashboard sections']:visible button[aria-haspopup='dialog']";
+
 export async function clickTab(page, name) {
-  const tabs = await page.locator("[role='tab']").all();
-  for (const t of tabs) {
+  // Historical wheel scenarios now live in the semantic Games section.
+  name = /^(wheel|wheels)$/i.test(name) ? "Games" : name;
+  if (await clickNavItem(page, name)) return true;
+  // Phone layout: sections not on the bar live in the More sheet.
+  const more = page.locator(MORE_BUTTON);
+  if (!(await more.count())) return false;
+  await more.first().click();
+  const sheet = page.getByRole("dialog", { name: "More" });
+  await sheet.waitFor({ timeout: 4000 });
+  for (const t of await sheet.locator("nav button").all()) {
+    if ((await t.innerText()).trim().toLowerCase().includes(name.toLowerCase())) {
+      await t.click();
+      await sheet.waitFor({ state: "hidden", timeout: 4000 }).catch(() => {});
+      return true;
+    }
+  }
+  await page.keyboard.press("Escape");
+  return false;
+}
+
+async function clickNavItem(page, name) {
+  const items = await page.locator(NAV_ITEMS).all();
+  for (const t of items) {
     try {
       if ((await t.innerText()).trim().toLowerCase().includes(name.toLowerCase())) {
         await t.click();
-        // Web-first wait: the clicked tab reflects its selected state once the
+        // Web-first wait: the clicked item reflects its current state once the
         // panel has switched — wait for that instead of a fixed pause.
         await t
-          .and(page.locator("[aria-selected='true']"))
+          .and(page.locator("[aria-current='page']"))
           .waitFor({ timeout: 4000 })
           .catch(() => {});
         return true;
       }
     } catch {
-      /* tab detached — skip */
+      /* item detached — skip */
     }
   }
   return false;

@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { withSuspendedReason } from "@/lib/onboarding/suspended";
 
 type Tone = "info" | "error" | "success";
 
@@ -15,6 +16,8 @@ interface ToastOptions {
   tone?: Tone;
   duration?: number;
   action?: { label: string; onClick: () => void };
+  /** A toast with the same key replaces the earlier one instead of stacking (WC-02). */
+  key?: string;
 }
 
 interface ToastItem {
@@ -22,7 +25,11 @@ interface ToastItem {
   message: string;
   tone: Tone;
   action?: { label: string; onClick: () => void };
+  key?: string;
 }
+
+/** Never more than this many on screen; the oldest goes first. */
+const MAX_VISIBLE = 3;
 
 type ToastFn = (message: string, opts?: ToastOptions) => void;
 
@@ -47,10 +54,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       const id = nextId.current++;
       const tone = opts?.tone ?? "info";
       const duration = opts?.duration ?? 3500;
-      setToasts((prev) => [
-        ...prev,
-        { id, message, tone, action: opts?.action },
-      ]);
+      // C11: a failed action while the account is suspended says why.
+      const text = tone === "error" ? withSuspendedReason(message) : message;
+      setToasts((prev) => {
+        const kept = opts?.key ? prev.filter((t) => t.key !== opts.key) : prev;
+        return [...kept, { id, message: text, tone, action: opts?.action, key: opts?.key }].slice(-MAX_VISIBLE);
+      });
       if (duration > 0) {
         window.setTimeout(() => dismiss(id), duration);
       }
@@ -67,41 +76,44 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         aria-live="polite"
         className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-center gap-2 px-4"
         style={{
-          paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)",
+          // Above the phone dashboard tab bar when present (globals.css), and
+          // above an editor's sticky Save bar while one is open (WC-16).
+          paddingBottom: "calc(max(env(safe-area-inset-bottom), var(--ff-bottom-offset, 0px)) + var(--ff-toast-offset, 0px) + 1rem)",
         }}
       >
+        {/* RD-21: a toast is a region with sibling buttons, never a button
+            inside a button; an error is an alert (assertive). */}
         {toasts.map((t) => (
-          <button
+          <div
             key={t.id}
-            type="button"
-            onClick={() => dismiss(t.id)}
-            className="card reveal pointer-events-auto flex w-full max-w-sm items-center gap-3 rounded-xl px-4 py-3 text-left text-sm text-ink"
+            data-testid="toast"
+            data-tone={t.tone}
+            role={t.tone === "error" ? "alert" : undefined}
+            className="card lift-in pointer-events-auto flex w-full max-w-sm items-center gap-2 rounded-xl py-1.5 pl-4 pr-1.5 text-left text-sm text-ink"
             style={{ boxShadow: `0 0 0 1px ${TONE_RING[t.tone]} inset` }}
           >
-            <span className="min-w-0 flex-1 break-words">{t.message}</span>
+            <span className="min-w-0 flex-1 break-words py-1.5">{t.message}</span>
             {t.action ? (
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => {
-                  e.stopPropagation();
+              <button
+                type="button"
+                onClick={() => {
                   t.action?.onClick();
                   dismiss(t.id);
                 }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    t.action?.onClick();
-                    dismiss(t.id);
-                  }
-                }}
-                className="shrink-0 rounded-md border border-line px-2 py-1 text-xs font-semibold text-ink transition-opacity hover:opacity-80"
+                className="min-h-9 shrink-0 rounded-md border border-line px-2.5 text-xs font-semibold text-ink transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]"
               >
                 {t.action.label}
-              </span>
+              </button>
             ) : null}
-          </button>
+            <button
+              type="button"
+              onClick={() => dismiss(t.id)}
+              aria-label="Dismiss"
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-md text-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]"
+            >
+              <span aria-hidden="true">×</span>
+            </button>
+          </div>
         ))}
       </div>
     </ToastContext.Provider>

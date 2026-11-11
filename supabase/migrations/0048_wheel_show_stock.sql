@@ -1,0 +1,11 @@
+-- 0048 Per-wheel "Show stock to fans" switch (RM-2).
+--
+-- Limited prizes show fans how many are really left ("3 left"). A creator can
+-- turn that off per wheel; the fan-safe projection (publicView.ts) then sends
+-- no count at all, only that a prize has run out (it has 0% odds, so the fan
+-- page must not tease it).
+--
+-- A plain column on wheels: the creator writes it through the existing
+-- wheels_rw RLS policy (own wheels only), so no new function, grant or policy
+-- is needed and nothing new is reachable by anon (0044's rule holds).
+alter table public.wheels add column if not exists show_stock boolean not null default true;

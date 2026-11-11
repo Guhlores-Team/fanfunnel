@@ -1,7 +1,9 @@
-import { notFound } from "next/navigation";
+import LegalLinks from "@/components/LegalLinks";
+import { linkNotFound } from "@/lib/fan/linkNotFound";
 import type { Metadata } from "next";
 import { getShareCard } from "@/lib/data";
-import { brandVars } from "@/lib/theme";
+import { brandVars, readableInk } from "@/lib/theme";
+import { publicGameCopy } from "@/lib/games/publicCopy";
 
 export const dynamic = "force-dynamic";
 
@@ -20,12 +22,17 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { shareId } = await params;
   const card = await getShareCard(shareId);
-  if (!card) return { title: "Win · FanFunnel" };
+  // WA-06 / WA-11: a share card is a fan's page, not the creator app, and it
+  // is reachable by link only. WA-04: an unknown id gets no preview at all.
+  const robots = { index: false, follow: false };
+  if (!card) return { title: "Win · FanFunnel", robots, manifest: null };
   const title = `I won ${card.prizeLabel}! 🎉`;
-  const description = `A ${RARITY_LABEL[card.rarity] ?? card.rarity} drop on ${card.creatorTitle}'s wheel.`;
+  const description = publicGameCopy(card.gameKind).dropOn(RARITY_LABEL[card.rarity] ?? card.rarity, card.creatorTitle);
   return {
     title,
     description,
+    robots,
+    manifest: null,
     openGraph: { title, description, images: [`/share/${shareId}/opengraph-image`] },
     twitter: { card: "summary_large_image", title, description },
   };
@@ -38,7 +45,8 @@ export default async function SharePage({
 }) {
   const { shareId } = await params;
   const card = await getShareCard(shareId);
-  if (!card) notFound();
+  if (!card) linkNotFound("share", shareId);
+  const copy = publicGameCopy(card.gameKind);
 
   return (
     <main
@@ -57,8 +65,8 @@ export default async function SharePage({
             {card.creatorTitle}
           </p>
           <span
-            className="mt-4 inline-block rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-white"
-            style={{ backgroundColor: card.color }}
+            className="mt-4 inline-block rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em]"
+            style={{ backgroundColor: card.color, color: readableInk(card.color) }}
           >
             {RARITY_LABEL[card.rarity] ?? card.rarity}
           </span>
@@ -77,7 +85,7 @@ export default async function SharePage({
             {card.prizeLabel}
           </h1>
           <p className="mt-3 text-sm text-muted text-pretty">
-            Won on {card.creatorTitle}&rsquo;s prize wheel — every spin wins.
+            {copy.wonOn(card.creatorTitle)}
           </p>
           <a
             href={`/verify/${shareId}`}
@@ -87,9 +95,10 @@ export default async function SharePage({
           </a>
         </div>
       </div>
-      <footer className="relative z-[1] mt-8 text-[11px] tracking-wide text-muted/70">
-        Powered by FanFunnel · every spin wins
+      <footer className="relative z-[1] mt-8 text-xs tracking-wide text-muted">
+        {copy.shareFooter}
       </footer>
+      <LegalLinks className="relative z-[1] mt-2" />
     </main>
   );
 }

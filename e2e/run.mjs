@@ -21,7 +21,43 @@ import {
   fanJourney,
   creatorExtras,
   fanExtras,
+  firstRunJourney,
+  notificationsJourney,
+  termsJourney,
 } from "./journeys.mjs";
+import { mobileJourney } from "./mobile.mjs";
+import { revealJourney } from "./reveal.mjs";
+import { pwaJourney } from "./pwa.mjs";
+import { stockJourney } from "./stock.mjs";
+import { playJourney } from "./play.mjs";
+import { glowJourney } from "./glow.mjs";
+import { winbackJourney } from "./winback.mjs";
+import { privacyJourney } from "./privacy.mjs";
+import { urlSafetyJourney } from "./urlSafety.mjs";
+import { cspJourney } from "./csp.mjs";
+
+import { pushJourney } from "./push.mjs";
+import { instantJourney } from "./instant.mjs";
+import { themingJourney } from "./theming.mjs";
+import { focusJourney } from "./focus.mjs";
+import { creatorRecoveryJourney } from "./creator-recovery.mjs";
+import { scratchJourney, bingoJourney } from "./games.mjs";
+import { checkSystemHealth, systemHealthJourney } from "./system-health.mjs";
+import { gameSwitchingJourney } from "./game-switching.mjs";
+import { safetyJourney } from "./safety.mjs";
+import { trustJourney } from "./trust.mjs";
+import { accountExtrasJourney } from "./account-extras.mjs";
+import { qaB5Journey } from "./qa-b5.mjs";
+import { agencyLeaveJourney } from "./agency-leave.mjs";
+import { fanDevicesJourney } from "./fan-devices.mjs";
+import { dashB6Journey } from "./dash-b6.mjs";
+import { opsB6Journey } from "./ops-b6.mjs";
+import { attackB6Journey } from "./attack-b6.mjs";
+import { fanB7Journey } from "./fan-b7.mjs";
+import { opsB7Journey } from "./ops-b7.mjs";
+import { dashB7Journey } from "./dash-b7.mjs";
+import { trustB7Journey } from "./trust-b7.mjs";
+import { authB7Journey } from "./auth-b7.mjs";
 
 let server = null;
 let browser = null;
@@ -37,18 +73,59 @@ try {
 
   const sink = attachSink(page);
   const runner = createRunner(sink);
+  let journeysCompleted = false;
 
   try {
     await creatorJourney(page, runner);
     await fanJourney(page, runner, ctx); // fan spins → creates a pending redemption
-    await creatorExtras(page, runner); // fulfil it + webhooks + happy hour
-    await fanExtras(page, runner, ctx); // wishlist/chat/share/out-of-spins/self-exclude (last)
+    await creatorExtras(page, runner, ctx); // fulfil it + drawer→inbox + admin + webhooks + happy hour
+    await revealJourney(page, runner, ctx); // RM-1: rarity reveal, tap-to-skip, reduced motion, announcement (own fan)
+    await stockJourney(page, runner, ctx); // RM-2: "N left", the Show-stock switch, near-miss vs card on phones (restores the wheel)
+    await fanExtras(page, runner, ctx); // wishlist/chat/share/out-of-spins/self-exclude
+    await notificationsJourney(page, runner, ctx); // bell: count → open marks seen → items navigate
+    await mobileJourney(browser, runner, sink); // phone: tab bar + More + fan sheet (read-only)
+    await pwaJourney(browser, runner, sink, ctx); // home-screen install on a fresh fan link (RM-4)
+    await playJourney(page, runner, ctx); // RM-6: Your play counts, reminder card, a break the server enforces (own fan)
+    await glowJourney(browser, runner, page, ctx); // RM-3: visit glow on a fresh fan link (no previews, clamped dates, gate)
+    await winbackJourney(page, runner, ctx); // RM-5: win-back queue, snooze, came back; Fans never copies a paused link
+    await privacyJourney(page, runner, ctx); // fan export/delete on a throwaway link + creator export
+    await termsJourney(page, runner); // creator clickwrap: stale version → prompt → accept (0055)
+
+    await pushJourney(browser, runner, sink, ctx); // web push: Settings card, iPhone rule, opt-in, F8 parity (own contexts)
+    await instantJourney(page, runner, ctx); // private reward setup, winner-only delivery, complete history (own wheel/fan)
+    await themingJourney(page, runner, ctx);
+    await focusJourney(page, runner, ctx); // durable play recovery, focused odds, reserved-code chase (own fixtures)
+    await scratchJourney(browser, runner, sink, ctx); //0060: real scratch ticket and durable recovery
+    await bingoJourney(browser, runner, sink, ctx); //0061: real personal bingo and linked line rewards
+    await gameSwitchingJourney(browser, runner, sink, ctx); // schedule takeover warning; campaign card, drawer and fan page agree
+    await creatorRecoveryJourney(page, runner, ctx); // durable grant-edit retry, reload and cancellation
+    await runner.step("System health: demo status never claims connected protection", () => checkSystemHealth(page));
+    await systemHealthJourney(page, runner);
+    await safetyJourney(page, runner, ctx); // A1 report → Admin › Reports → resolve; A4 blocked fan (own fans)
+    await trustJourney(page, runner, ctx); // b6 trust: age gate on chat/wishlist/opt-in, delivery status, paused wins view, legal links, security.txt
+    await urlSafetyJourney(page, runner, ctx); // malformed URL privacy/security-header regression
+    await cspJourney(page, runner, ctx); // L3: per-route CSP, nonces on every script, injected script/eval refused
+    await accountExtrasJourney(page, runner, ctx); // A37/A36: DM templates, referrals, autopilot, close guard, demo-only states
+    await qaB5Journey(browser, runner, sink, ctx); // QA b5: scratch reveal beat, chat and age-gate focus, truthful top-up, URL sections, CSV import, start a chat
+    await agencyLeaveJourney(browser, runner, sink, ctx); // b6: Leave agency (confirm, error, pending, owner negative) and the 0071 display-name refusal
+    await fanDevicesJourney(browser, runner, sink, ctx); // b6: large text/landscape gate and Safety sheet, suspended creator, no Web Locks, in-app browsers, Slow 3G gate, claim card, verify zone
+    await dashB6Journey(browser, runner, sink, ctx); // b6: failed loads vs empty, 401/429, unsaved drafts, minted link card, fulfilment → fan, owed before Clear all data, stale-tab save
+    await opsB6Journey(browser, runner, sink, ctx); // b6 ops: /api/health, System health config/maintenance lines, admin win lookup (+ cross-site 403), Activity filter
+    await attackB6Journey(page, runner, ctx); // b6 attack: demo dashboard APIs, /verify 404, fan-token miss cap, /api/errors limits, server claim codes
+    await fanB7Journey(browser, runner, sink, ctx); // b7 fan: land by prize id, game switch, top-up refresh, old browsers, refusals, offline, creator-session refusal, owed prize, claim codes, busy page, in-app hint, tap targets, two tabs, legal sheet, dark brand, real 404s
+    await opsB7Journey(browser, runner, sink, ctx); // b7 server: cron 401, leaderboard wait page + Retry-After, /api no-store default, empty-segment paths
+    await dashB7Journey(browser, runner, sink, ctx); // b7: failed reads vs wipes, refused grants, due dates, campaign pending, local date, confirms and undo
+    await trustB7Journey(page, runner, ctx); // b7 trust: reserved names, public-text screening, legal page facts, security.txt Canonical/Policy
+    await authB7Journey(browser, runner, sink, ctx); // b7 auth: Continue landing page, per-type link failures, e-mail change step 1 of 2, suspended dashboard, /signup, titles, signout origin
+    await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
+    journeysCompleted = true;
   } catch (e) {
     log("Journey crashed: " + (e?.stack || e));
   }
 
   // Screenshot the final state if anything went wrong, for debugging in CI.
-  const ok = runner.report();
+  // A report containing only earlier passing steps cannot prove the run finished.
+  const ok = runner.report() && journeysCompleted;
   if (!ok) {
     try {
       const dir = ensureArtifacts();

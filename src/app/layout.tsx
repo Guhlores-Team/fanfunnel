@@ -4,6 +4,8 @@ import "./globals.css";
 import DebugConsole from "@/components/debug/DebugConsole";
 import DebugErrorBoundary from "@/components/debug/DebugErrorBoundary";
 import CrashCanary from "@/components/debug/CrashCanary";
+import EnvBadge from "@/components/debug/EnvBadge";
+import { siteOrigin } from "@/lib/account/accountMail";
 
 // Display face with real character (not Inter, not Space Grotesk) for headlines;
 // Geist for clean body; Geist Mono powers tabular figures in metrics.
@@ -15,10 +17,15 @@ const display = Bricolage_Grotesque({
 const sans = Geist({ variable: "--ff-sans", subsets: ["latin"] });
 const mono = Geist_Mono({ variable: "--ff-mono", subsets: ["latin"] });
 
+// Absolute links in page metadata (link previews, canonical) use the site's
+// own address: NEXT_PUBLIC_SITE_URL, else Vercel's production or deployment URL.
+const origin = siteOrigin();
+
 export const metadata: Metadata = {
-  title: "FanFunnel — Creator Prize Wheels",
+  ...(origin ? { metadataBase: new URL(origin) } : {}),
+  title: "FanFunnel — Creator Prize Games",
   description:
-    "Send each fan a personal prize wheel. Every spin wins; rare drops keep them coming back.",
+    "Send each fan a personal prize game: a wheel, scratch tickets or bingo. Every play wins; rare drops keep them coming back.",
 };
 
 // viewportFit:"cover" + safe-area padding (in globals.css) keeps content clear
@@ -38,7 +45,7 @@ export default function RootLayout({
       lang="en"
       className={`${display.variable} ${sans.variable} ${mono.variable} h-full antialiased`}
     >
-      <body className="min-h-[100dvh] flex flex-col bg-base text-ink">
+      <body className="min-h-[100dvh] flex flex-col bg-canvas text-ink">
         <DebugErrorBoundary>
           {process.env.NEXT_PUBLIC_ENABLE_DEBUG === "1" && <CrashCanary />}
           {children}
@@ -48,6 +55,7 @@ export default function RootLayout({
             isn't mounted at all, so appending ?debug=1 to a prod URL does nothing.
             (The error boundary above always stays on — it's protective.) */}
         {process.env.NEXT_PUBLIC_ENABLE_DEBUG === "1" && <DebugConsole />}
+        {process.env.NEXT_PUBLIC_ENABLE_DEBUG === "1" && <EnvBadge />}
       </body>
     </html>
   );

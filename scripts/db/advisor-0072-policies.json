@@ -1,0 +1,322 @@
+[
+ {
+  "table": "actor_request_cancellations",
+  "policy": "actor_request_cancellations_select",
+  "cmd": "SELECT",
+  "roles": [
+   "authenticated"
+  ],
+  "using": "(((actor_id = auth.uid()) AND can_act_for(auth.uid(), 'view'::text)) OR is_admin())",
+  "check": null
+ },
+ {
+  "table": "autopilot_dismissals",
+  "policy": "autopilot_dismissals_rw",
+  "cmd": "ALL",
+  "roles": [
+   "public"
+  ],
+  "using": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())",
+  "check": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())"
+ },
+ {
+  "table": "campaign_packs",
+  "policy": "campaign_packs_rw",
+  "cmd": "ALL",
+  "roles": [
+   "public"
+  ],
+  "using": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())",
+  "check": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())"
+ },
+ {
+  "table": "chase_stock_evidence",
+  "policy": "chase_stock_evidence_service",
+  "cmd": "SELECT",
+  "roles": [
+   "service_role"
+  ],
+  "using": "(auth.role() = 'service_role'::text)",
+  "check": null
+ },
+ {
+  "table": "creator_actor_contexts",
+  "policy": "creator_actor_contexts_own",
+  "cmd": "SELECT",
+  "roles": [
+   "authenticated"
+  ],
+  "using": "(actor_id = auth.uid())",
+  "check": null
+ },
+ {
+  "table": "creator_applications",
+  "policy": "creator_apps_insert",
+  "cmd": "INSERT",
+  "roles": [
+   "public"
+  ],
+  "using": null,
+  "check": "((profile_id = auth.uid()) AND (EXISTS ( SELECT 1\n   FROM profiles p\n  WHERE ((p.id = auth.uid()) AND p.is_active))))"
+ },
+ {
+  "table": "creator_applications",
+  "policy": "creator_apps_select",
+  "cmd": "SELECT",
+  "roles": [
+   "public"
+  ],
+  "using": "(((profile_id = auth.uid()) AND can_act_for(auth.uid(), 'view'::text)) OR is_admin())",
+  "check": null
+ },
+ {
+  "table": "creator_media",
+  "policy": "creator_media_delete",
+  "cmd": "DELETE",
+  "roles": [
+   "public"
+  ],
+  "using": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())",
+  "check": null
+ },
+ {
+  "table": "creator_media",
+  "policy": "creator_media_update",
+  "cmd": "UPDATE",
+  "roles": [
+   "public"
+  ],
+  "using": "((creator_id = auth.uid()) AND current_user_active())",
+  "check": "((creator_id = auth.uid()) AND current_user_active())"
+ },
+ {
+  "table": "creator_request_journal",
+  "policy": "creator_request_journal_select",
+  "cmd": "SELECT",
+  "roles": [
+   "authenticated"
+  ],
+  "using": "(((actor_id = auth.uid()) AND can_act_for(auth.uid(), 'view'::text)) OR can_act_for(creator_id, 'view'::text) OR is_admin())",
+  "check": null
+ },
+ {
+  "table": "creator_storage_deletions",
+  "policy": "creator_storage_deletions_read",
+  "cmd": "SELECT",
+  "roles": [
+   "authenticated"
+  ],
+  "using": "(((owner_id = auth.uid()) AND can_act_for(auth.uid(), 'view'::text)) OR is_admin())",
+  "check": null
+ },
+ {
+  "table": "creator_storage_dispatches",
+  "policy": "creator_storage_dispatches_read",
+  "cmd": "SELECT",
+  "roles": [
+   "authenticated"
+  ],
+  "using": "(((owner_id = auth.uid()) AND can_act_for(auth.uid(), 'view'::text)) OR is_admin())",
+  "check": null
+ },
+ {
+  "table": "creator_storage_objects",
+  "policy": "creator_storage_objects_read",
+  "cmd": "SELECT",
+  "roles": [
+   "authenticated"
+  ],
+  "using": "(((owner_id = auth.uid()) AND can_act_for(auth.uid(), 'view'::text)) OR is_admin())",
+  "check": null
+ },
+ {
+  "table": "dm_templates",
+  "policy": "dm_templates_rw",
+  "cmd": "ALL",
+  "roles": [
+   "public"
+  ],
+  "using": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())",
+  "check": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())"
+ },
+ {
+  "table": "fan_checkins",
+  "policy": "fan_checkins_select",
+  "cmd": "SELECT",
+  "roles": [
+   "public"
+  ],
+  "using": "(((creator_id = auth.uid()) AND current_user_active()) OR can_act_for(creator_id, 'view'::text) OR is_admin())",
+  "check": null
+ },
+ {
+  "table": "happy_hours",
+  "policy": "happy_hours_rw",
+  "cmd": "ALL",
+  "roles": [
+   "public"
+  ],
+  "using": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())",
+  "check": "((((creator_id = auth.uid()) AND current_user_active()) OR is_admin()) AND (EXISTS ( SELECT 1\n   FROM wheels w\n  WHERE ((w.id = happy_hours.wheel_id) AND (w.creator_id = happy_hours.creator_id)))))"
+ },
+ {
+  "table": "org_members",
+  "policy": "org_members_read",
+  "cmd": "SELECT",
+  "roles": [
+   "public"
+  ],
+  "using": "(((profile_id = auth.uid()) AND current_user_active()) OR _owns_org(org_id) OR is_admin())",
+  "check": null
+ },
+ {
+  "table": "orgs",
+  "policy": "orgs_read",
+  "cmd": "SELECT",
+  "roles": [
+   "public"
+  ],
+  "using": "(((owner_id = auth.uid()) AND current_user_active()) OR _is_org_member(id) OR is_admin())",
+  "check": null
+ },
+ {
+  "table": "orgs",
+  "policy": "orgs_write",
+  "cmd": "ALL",
+  "roles": [
+   "public"
+  ],
+  "using": "(((owner_id = auth.uid()) AND current_user_active()) OR is_admin())",
+  "check": "(((owner_id = auth.uid()) AND current_user_active()) OR is_admin())"
+ },
+ {
+  "table": "prize_templates",
+  "policy": "prize_templates_rw",
+  "cmd": "ALL",
+  "roles": [
+   "public"
+  ],
+  "using": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())",
+  "check": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())"
+ },
+ {
+  "table": "profiles",
+  "policy": "profiles_select",
+  "cmd": "SELECT",
+  "roles": [
+   "public"
+  ],
+  "using": "((id = auth.uid()) OR is_admin())",
+  "check": null
+ },
+ {
+  "table": "push_log",
+  "policy": "push_log_select",
+  "cmd": "SELECT",
+  "roles": [
+   "public"
+  ],
+  "using": "(((user_id = auth.uid()) AND current_user_active()) OR is_admin())",
+  "check": null
+ },
+ {
+  "table": "push_subscriptions",
+  "policy": "push_subscriptions_delete",
+  "cmd": "DELETE",
+  "roles": [
+   "public"
+  ],
+  "using": "(((user_id = auth.uid()) AND current_user_active()) OR is_admin())",
+  "check": null
+ },
+ {
+  "table": "push_subscriptions",
+  "policy": "push_subscriptions_insert",
+  "cmd": "INSERT",
+  "roles": [
+   "public"
+  ],
+  "using": null,
+  "check": "((user_id = auth.uid()) AND current_user_active())"
+ },
+ {
+  "table": "push_subscriptions",
+  "policy": "push_subscriptions_select",
+  "cmd": "SELECT",
+  "roles": [
+   "public"
+  ],
+  "using": "(((user_id = auth.uid()) AND current_user_active()) OR is_admin())",
+  "check": null
+ },
+ {
+  "table": "push_subscriptions",
+  "policy": "push_subscriptions_update",
+  "cmd": "UPDATE",
+  "roles": [
+   "public"
+  ],
+  "using": "((user_id = auth.uid()) AND current_user_active())",
+  "check": "((user_id = auth.uid()) AND current_user_active())"
+ },
+ {
+  "table": "referrals",
+  "policy": "referrals_rw",
+  "cmd": "ALL",
+  "roles": [
+   "public"
+  ],
+  "using": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())",
+  "check": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())"
+ },
+ {
+  "table": "reward_crypto_canary",
+  "policy": "reward_crypto_canary_service",
+  "cmd": "SELECT",
+  "roles": [
+   "service_role"
+  ],
+  "using": "(auth.role() = 'service_role'::text)",
+  "check": null
+ },
+ {
+  "table": "spins",
+  "policy": "spins_select",
+  "cmd": "SELECT",
+  "roles": [
+   "public"
+  ],
+  "using": "(((creator_id = auth.uid()) AND can_act_for(auth.uid(), 'view'::text)) OR is_admin())",
+  "check": null
+ },
+ {
+  "table": "webhooks",
+  "policy": "webhooks_rw",
+  "cmd": "ALL",
+  "roles": [
+   "public"
+  ],
+  "using": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())",
+  "check": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())"
+ },
+ {
+  "table": "wheel_templates",
+  "policy": "wheel_templates_rw",
+  "cmd": "ALL",
+  "roles": [
+   "public"
+  ],
+  "using": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())",
+  "check": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())"
+ },
+ {
+  "table": "wishlists",
+  "policy": "wishlists_rw",
+  "cmd": "ALL",
+  "roles": [
+   "public"
+  ],
+  "using": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())",
+  "check": "(((creator_id = auth.uid()) AND current_user_active()) OR is_admin())"
+ }
+]

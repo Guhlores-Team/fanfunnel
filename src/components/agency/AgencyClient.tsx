@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { AGENCY_INVITE_TTL_DAYS } from "@/lib/agency/config";
 import { formatCents } from "@/lib/format";
+import SeatWorkspace from "./SeatWorkspace";
+import LoadFailed from "@/components/dashboard/LoadFailed";
+import { loadJson } from "@/lib/hooks/loadJson";
+import LeaveAgency, { LeftAgency, leaveKind, type LeaveKind } from "./LeaveAgency";
+import SuspendedBanner from "@/components/account/SuspendedBanner";
 
 interface CreatorStat {
   id: string;
@@ -12,7 +18,8 @@ interface CreatorStat {
   fans: number;
   spins: number;
   pending: number;
-  revenue: number;
+  /** cents; null when masked for this seat (WG-19). */
+  revenue: number | null;
 }
 interface Member {
   id: string;
@@ -20,15 +27,40 @@ interface Member {
   email: string;
   displayName: string;
   role: string;
+  /** C10: the creators this seat may act for (owner view). */
+  creatorIds?: string[];
 }
 interface Invite {
+  /** null: a creator invitation; otherwise the seat role offered (0068). */
+  role?: string | null;
   id: string;
   email: string;
+  expiresAt?: string | null;
+  /** WG-06: ran out; listed for a while with Resend. */
+  expired?: boolean;
+}
+interface Tie {
+  orgId: string;
+  orgName: string;
+  kind: "owner" | "staff" | "creator";
+  role: string | null;
+  ownerActive?: boolean | null;
 }
 interface Overview {
   org: { id: string; name: string } | null;
+  /** A36: demo mode, where agencies can't be created. */
+  demo?: boolean;
+  /** A45: the caller is a creator an agency manages (no console of its own). */
+  managed?: boolean;
+  /** With `managed`: that agency's id, so the creator can leave it. */
+  orgId?: string | null;
+  /** With `managed`: the agency's name, when this creator may read it. */
+  orgName?: string | null;
   isOwner: boolean;
-  totals: { creators: number; fans: number; spins: number; pending: number; revenue: number };
+  viewerId?: string;
+  ownerActive?: boolean | null;
+  ties?: Tie[];
+  totals: { creators: number; fans: number; spins: number; pending: number; revenue: number | null };
   creators: CreatorStat[];
   members: Member[];
   invites: Invite[];
@@ -36,15 +68,20 @@ interface Overview {
 
 const ROLES = ["manager", "chatter", "fulfiller", "analyst"] as const;
 
-async function manage(body: Record<string, unknown>): Promise<string | null> {
-  const res = await fetch("/api/agency/manage", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (res.ok) return null;
+async function manage(body: Record<string, unknown>): Promise<{ error: string } | { invite?: string }> {
+  let res: Response;
+  try {
+    res = await fetch("/api/agency/manage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { error: "network" };
+  }
   const d = await res.json().catch(() => ({}));
-  return d.error ?? "error";
+  if (res.ok) return { invite: typeof d.invite === "string" ? d.invite : undefined };
+  return { error: typeof d.error === "string" ? d.error : "error" };
 }
 
 // Map each known status the agency RPC can return to a specific, actionable
@@ -52,42 +89,89 @@ async function manage(body: Record<string, unknown>): Promise<string | null> {
 // back to one generic line.
 const errLabel = (e: string) =>
   ({
-    no_such_user: "No account with that email.",
+    invalid_email: "Enter a valid email address.",
+    rate_limited: "Too many invitations in the last hour. Try again later.",
     already_in_org: "That creator is already in another agency.",
+    expired: "That invitation has expired. Send a new invitation.",
     not_owner: "Only the agency owner can do that.",
+    owner_seat: "That is the owner's own seat. It stays for as long as the agency exists.",
     not_found: "That item no longer exists — refresh and try again.",
     invalid_role: "Pick a valid staff role.",
     db_error: "Something went wrong on our end — please try again.",
+    demo_only: "Demo only: agencies need a connected database, so nothing was saved.",
+    network: "Couldn't reach the server. Check your connection and try again.",
+    inactive: "That account is suspended, so it can't hold a seat right now.",
+    name_reserved: "That agency name is reserved for FanFunnel and its staff. Pick another.",
+    invalid_name: "That agency name can't be used. Use letters, numbers and ordinary punctuation.",
+    forbidden: "This account can't do that right now. If it is suspended or still waiting for approval, that is why.",
   })[e] ?? "Couldn't complete that — please try again.";
+
+// WG-06: the line names what happened to the invitation, never whether the
+// address has an account (B2 / ATK-06).
+const INVITE_SENT =
+  "Invitation saved. If that address has an approved FanFunnel account, they'll get an e-mail; otherwise they'll see it when they sign up and are approved with that address.";
+const INVITE_ALREADY_PENDING =
+  "An invitation for that address is already waiting, so nothing new was sent. Use Resend to e-mail it again.";
+const INVITE_RESENT =
+  "Invitation re-sent. If that address has an approved FanFunnel account, they'll get a fresh e-mail (at most 3 a day per address).";
 
 export default function AgencyClient() {
   const [data, setData] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
+  // B2: the same neutral line whether or not the address has an account.
+  const [sent, setSent] = useState<string | null>(null);
   // Stable keys for in-flight destructive actions so each button can disable
   // itself while its request is pending (prevents double-submits).
   const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
+  const [left, setLeft] = useState<LeaveKind | null>(null);
+  // C10: removing a creator or a seat asks first ("creator:<id>" / "member:<id>").
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
 
+  // RD-02: a failed read is shown as a failed read with Retry, never as
+  // "Start your agency" to an owner or staff member.
+  const [loadError, setLoadError] = useState<unknown>(null);
+  // WG-03: which of the viewer's agencies the console shows.
+  const [orgChoice, setOrgChoice] = useState<string | null>(null);
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch("/api/agency", { cache: "no-store" });
-      if (res.ok) setData(await res.json());
+      setData(await loadJson<Overview>(orgChoice ? `/api/agency?org=${encodeURIComponent(orgChoice)}` : "/api/agency"));
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(e);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [orgChoice]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; state changes only after the response arrives
     void refresh();
   }, [refresh]);
 
+  // WU-01: a suspended seat or owner reads nothing here (the database hides
+  // the agency from a suspended session), which used to look like "you have
+  // no agency, start one". The viewer's own standing says why instead.
+  const [standing, setStanding] = useState<"unknown" | "active" | "suspended">("unknown");
+  useEffect(() => {
+    let live = true;
+    loadJson<{ isActive?: boolean }>("/api/account")
+      .then((account) => { if (live) setStanding(account?.isActive === false ? "suspended" : "active"); })
+      .catch(() => { if (live) setStanding("active"); });
+    return () => { live = false; };
+  }, []);
+  const viewerSuspended = standing === "suspended";
+
   const run = async (body: Record<string, unknown>) => {
     setMsg(null);
-    const err = await manage(body);
-    if (err) {
-      setMsg(errLabel(err));
+    setSent(null);
+    const outcome = await manage(body);
+    if ("error" in outcome) {
+      setMsg(errLabel(outcome.error));
       return false;
     }
+    if (body.action === "add_creator" || body.action === "add_member") setSent(outcome.invite === "pending" ? INVITE_ALREADY_PENDING : INVITE_SENT);
+    if (body.action === "resend_invite") setSent(INVITE_RESENT);
     await refresh();
     return true;
   };
@@ -108,87 +192,132 @@ export default function AgencyClient() {
     }
   };
 
-  if (loading) return <p className="p-8 text-sm text-white/40">Loading…</p>;
+  if (loading || standing === "unknown") return <p className="p-8 text-sm text-muted">Loading…</p>;
+
+  if (left) return <LeftAgency kind={left} />;
+
+  if (!data && loadError != null) {
+    return (
+      <div className="mx-auto max-w-xl px-5 py-10">
+        <LoadFailed error={loadError} what="your agency" onRetry={refresh} testId="agency-load-failed" />
+      </div>
+    );
+  }
+
+  // Never the owner, the demo or a non-member (leaveKind).
+  const canLeave = leaveKind(data);
+
+  if (data && !data.org && data.managed) {
+    return (
+      <>
+        {viewerSuspended && <div className="mx-auto max-w-xl px-5 pt-8"><SuspendedBanner suspended /></div>}
+        <ManagedByAgency orgId={canLeave === "creator" ? data.orgId ?? null : null} orgName={data.orgName ?? null} ownerActive={data.ownerActive ?? null} onLeft={() => setLeft("creator")} />
+      </>
+    );
+  }
+
+  // A suspended account with nothing readable: say why, never "start one".
+  if ((!data || !data.org) && viewerSuspended) return <SuspendedAgency />;
 
   // No org yet → let the user create one.
   if (!data || !data.org) {
-    return <CreateOrg onCreate={(name) => run({ action: "create_org", name })} />;
+    return <CreateOrg demo={!!data?.demo} msg={msg} onCreate={(name) => run({ action: "create_org", name })} />;
   }
 
   const { org, isOwner } = data;
   const t = data.totals;
+  // TS-16 / WG-19: "Tips recorded", and hidden when masked for this seat.
   const tiles = [
     { label: "Creators", value: String(t.creators) },
     { label: "Fans", value: String(t.fans) },
     { label: "Spins", value: String(t.spins) },
     { label: "Pending", value: String(t.pending) },
-    { label: "Revenue", value: formatCents(t.revenue) },
+    ...(t.revenue === null ? [] : [{ label: "Tips recorded", value: formatCents(t.revenue) }]),
   ];
+  const ties = data.ties ?? [];
+  const consoles = ties.filter((tie) => tie.kind !== "creator");
+  const ownerSeat = isOwner && data.viewerId ? data.members.find((m) => m.profileId === data.viewerId) ?? null : null;
+  const staff = data.members.filter((m) => !(ownerSeat && m.id === ownerSeat.id));
 
   return (
-    <div className="mx-auto max-w-6xl px-5 py-8 text-white">
+    <div className="mx-auto max-w-6xl px-5 py-8 text-ink">
+      <SuspendedBanner suspended={viewerSuspended} />
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-extrabold">{org.name}</h1>
-          <p className="text-sm text-white/50">
+          <p className="text-sm text-muted">
             Agency console{isOwner ? " · owner" : " · staff"}
           </p>
         </div>
         <Link
           href="/dashboard"
-          className="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-semibold text-white/70 hover:bg-white/5"
+          className="inline-flex min-h-9 items-center rounded-lg border border-line px-3 text-xs font-semibold text-muted hover:bg-surface-2 hover:text-ink"
         >
           ← My dashboard
         </Link>
       </header>
+
+      {consoles.length > 1 && (
+        <label className="mt-4 block text-sm">
+          <span className="text-muted">Agency</span>
+          <select
+            data-testid="agency-picker"
+            value={org.id}
+            onChange={(e) => { setLoading(true); setOrgChoice(e.target.value); }}
+            className="ff-input mt-1 w-auto"
+          >
+            {consoles.map((tie) => (
+              <option key={tie.orgId} value={tie.orgId}>{tie.orgName}{tie.kind === "owner" ? " (yours)" : ` (${tie.role ?? "staff"} seat)`}</option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {data.ownerActive === false && (
+        <p role="alert" data-testid="agency-owner-suspended" className="mt-4 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm text-amber-200 text-pretty">
+          This agency&apos;s owner account is suspended, so every seat here is paused: inboxes, prize queues and campaigns can&apos;t be opened until FanFunnel reactivates the owner. Creators the agency manages keep their own dashboards.
+        </p>
+      )}
+
+      <SeatWorkspace />
 
       {msg && (
         <p className="mt-4 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm text-amber-200">
           {msg}
         </p>
       )}
+      {sent && !msg && (
+        <p role="status" data-testid="invite-sent" className="mt-4 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-muted">
+          {sent}
+        </p>
+      )}
 
       <div className="mt-6 grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
         {tiles.map((tile) => (
-          <div key={tile.label} className="rounded-2xl border border-white/10 bg-white/5 p-5">
-            <p className="text-2xl font-extrabold text-pink-300">{tile.value}</p>
-            <p className="mt-1 text-sm text-white/50">{tile.label}</p>
+          <div key={tile.label} className="rounded-2xl border border-line bg-surface p-5">
+            <p className="text-2xl font-extrabold text-brand">{tile.value}</p>
+            <p className="mt-1 text-sm text-muted">{tile.label}</p>
           </div>
         ))}
       </div>
 
-      <div className="mt-8 flex items-center justify-between">
+      <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-bold">Creators</h2>
         {isOwner && (
           <AddByEmail
             placeholder="Invite creator by email"
+            label="Creator's email"
             cta="Invite"
             onAdd={(email) => run({ action: "add_creator", orgId: org.id, email })}
           />
         )}
       </div>
 
-      {isOwner && data.invites.length > 0 && (
+      {isOwner && <p className="mt-2 text-sm text-muted">Invitations expire after {AGENCY_INVITE_TTL_DAYS} days; an expired one stays listed here for a while so you can re-send it.</p>}
+      {isOwner && data.invites.some((inv) => !inv.role) && (
         <div className="mt-3 space-y-2">
-          {data.invites.map((inv) => (
-            <div
-              key={inv.id}
-              className="flex items-center justify-between gap-3 rounded-2xl border border-dashed border-white/15 bg-white/[0.03] p-4"
-            >
-              <div className="min-w-0">
-                <p className="text-sm text-white/70">{inv.email}</p>
-                <p className="text-xs text-amber-300/80">Invited · awaiting acceptance</p>
-              </div>
-              <button
-                onClick={() =>
-                  runGuarded(`revoke:${inv.id}`, { action: "revoke_invite", inviteId: inv.id })
-                }
-                disabled={busyKeys.has(`revoke:${inv.id}`)}
-                className="rounded-md border border-white/15 px-2 py-1 text-xs text-white/50 hover:text-white disabled:opacity-50"
-              >
-                Revoke
-              </button>
-            </div>
+          {data.invites.filter((inv) => !inv.role).map((inv) => (
+            <InviteRow key={inv.id} invite={inv} what="Invited" busyKeys={busyKeys} onResend={() => runGuarded(`resend:${inv.id}`, { action: "resend_invite", inviteId: inv.id })} onRevoke={() => runGuarded(`revoke:${inv.id}`, { action: "revoke_invite", inviteId: inv.id })} />
           ))}
         </div>
       )}
@@ -196,45 +325,53 @@ export default function AgencyClient() {
         {data.creators.map((c) => (
           <div
             key={c.id}
-            className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 p-4"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface p-4"
           >
             <div className="min-w-0">
               <p className="font-bold">{c.displayName}</p>
-              <p className="text-xs text-white/40">{c.email}</p>
+              <p className="text-xs text-muted">{c.email}</p>
             </div>
-            <div className="flex flex-wrap items-center gap-4 text-sm text-white/70">
+            <div className="flex flex-wrap items-center gap-4 text-sm text-muted">
               <span>{c.fans} fans</span>
               <span>{c.spins} spins</span>
               <span>{c.pending} pending</span>
-              <span className="font-bold text-pink-300">{formatCents(c.revenue)}</span>
+              {c.revenue !== null && <span className="font-bold text-brand" title="Tips recorded">{formatCents(c.revenue)}</span>}
               {isOwner && (
                 <button
-                  onClick={() =>
-                    runGuarded(`creator:${c.id}`, {
-                      action: "remove_creator",
-                      orgId: org.id,
-                      creatorId: c.id,
-                    })
-                  }
+                  onClick={() => setConfirmRemove(`creator:${c.id}`)}
                   disabled={busyKeys.has(`creator:${c.id}`)}
-                  className="rounded-md border border-white/15 px-2 py-1 text-xs text-white/50 hover:text-white disabled:opacity-50"
+                  aria-expanded={confirmRemove === `creator:${c.id}`}
+                  className="rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink disabled:opacity-50"
                 >
                   Remove
                 </button>
               )}
             </div>
+            {isOwner && confirmRemove === `creator:${c.id}` && (
+              <ConfirmRemove
+                text={`Remove ${c.displayName} from ${org.name}? Your owner, managers and staff lose access to their games, fans, inbox and fulfilment right away. Their account and data stay theirs; you'd need a new invitation to add them back.`}
+                cta="Yes, remove creator"
+                busy={busyKeys.has(`creator:${c.id}`)}
+                onCancel={() => setConfirmRemove(null)}
+                onConfirm={async () => {
+                  if (await runGuarded(`creator:${c.id}`, { action: "remove_creator", orgId: org.id, creatorId: c.id })) setConfirmRemove(null);
+                }}
+              />
+            )}
           </div>
         ))}
         {data.creators.length === 0 && (
-          <p className="text-sm text-white/40">No creators yet. Invite one by email above — they join once they accept.</p>
+          <p className="text-sm text-muted">No creators yet. Invite one by email above — they join once they accept.</p>
         )}
       </div>
 
-      <div className="mt-8 flex items-center justify-between">
+      <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-bold">Staff seats</h2>
         {isOwner && (
           <AddByEmail
             placeholder="Add seat by email"
+            label="Staff member's email"
+            describedBy="seat-onboarding-help"
             withRole
             onAdd={(email, role) =>
               run({ action: "add_member", orgId: org.id, email, role: role ?? "analyst" })
@@ -242,74 +379,205 @@ export default function AgencyClient() {
           />
         )}
       </div>
+      {isOwner && (
+        <p id="seat-onboarding-help" data-testid="seat-onboarding-help" className="mt-2 max-w-2xl text-sm text-muted text-pretty">
+          Staff need an approved creator account first: they sign up, and an admin approves it. Add them by the email
+          on that account; they&apos;ll get an invite to accept. A seat does nothing while their account is waiting for approval.
+          Managers act for every creator in the agency; chatters, fulfillers and analysts only for the creators you tick below.
+        </p>
+      )}
+      {ownerSeat && (
+        <p data-testid="owner-seat-note" className="mt-2 text-xs text-muted">You hold a {ownerSeat.role === "owner" ? "owner's" : ownerSeat.role} seat here yourself, so you can work your creators&apos; inboxes, queues and campaigns.</p>
+      )}
       <div className="mt-3 space-y-2">
-        {data.members.map((m) => (
-          <div key={m.id} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+        {staff.map((m) => (
+          <div key={m.id} className="rounded-2xl border border-line bg-surface p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="font-bold">{m.displayName}</p>
-                <p className="text-xs text-white/40">{m.email}</p>
+                <p className="text-xs text-muted">{m.email}</p>
               </div>
               <div className="flex items-center gap-2">
-                <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold capitalize">
+                <span className="rounded-full bg-surface-2 px-3 py-1 text-xs font-semibold capitalize">
                   {m.role}
                 </span>
                 {isOwner && (
                   <button
-                    onClick={() =>
-                      runGuarded(`member:${m.id}`, { action: "remove_member", memberId: m.id })
-                    }
+                    onClick={() => setConfirmRemove(`member:${m.id}`)}
                     disabled={busyKeys.has(`member:${m.id}`)}
-                    className="rounded-md border border-white/15 px-2 py-1 text-xs text-white/50 hover:text-white disabled:opacity-50"
+                    aria-expanded={confirmRemove === `member:${m.id}`}
+                    className="rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink disabled:opacity-50"
                   >
                     Remove
                   </button>
                 )}
               </div>
             </div>
-            {/* Manager seats act for every creator; others are scoped per-creator. */}
+            {isOwner && confirmRemove === `member:${m.id}` && (
+              <ConfirmRemove
+                text={`Remove ${m.displayName}'s ${m.role} seat? They lose access to every creator in ${org.name} right away. Their own account stays.`}
+                cta="Yes, remove seat"
+                busy={busyKeys.has(`member:${m.id}`)}
+                onCancel={() => setConfirmRemove(null)}
+                onConfirm={async () => {
+                  if (await runGuarded(`member:${m.id}`, { action: "remove_member", memberId: m.id })) setConfirmRemove(null);
+                }}
+              />
+            )}
+            {/* Manager seats act for every creator; others are scoped per-creator (C10: toggles with state). */}
             {isOwner && m.role !== "manager" && data.creators.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2 border-t border-white/10 pt-3">
-                <span className="text-xs text-white/40">Can act for:</span>
-                {data.creators.map((c) => (
-                  <button
-                    key={c.id}
-                    onClick={() =>
-                      run({ action: "scope_creator", memberId: m.id, creatorId: c.id, on: true })
-                    }
-                    className="rounded-full border border-white/15 px-2.5 py-0.5 text-xs text-white/60 hover:bg-white/10 hover:text-white"
-                  >
-                    + {c.displayName}
-                  </button>
-                ))}
+              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3" role="group" aria-label={`Creators ${m.displayName} can act for`}>
+                <span className="text-xs text-muted">Can act for:</span>
+                {data.creators.map((c) => {
+                  const on = (m.creatorIds ?? []).includes(c.id);
+                  const key = `scope:${m.id}:${c.id}`;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      role="switch"
+                      aria-checked={on}
+                      aria-label={`${m.displayName} can act for ${c.displayName}`}
+                      disabled={busyKeys.has(key)}
+                      onClick={() => runGuarded(key, { action: "scope_creator", memberId: m.id, creatorId: c.id, on: !on })}
+                      className={`inline-flex min-h-7 items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs disabled:opacity-50 ${
+                        on ? "border-brand/50 bg-surface-2 font-semibold text-ink" : "border-line text-muted hover:bg-surface-2 hover:text-ink"
+                      }`}
+                    >
+                      <span aria-hidden="true">{on ? "✓" : "+"}</span>
+                      {c.displayName}
+                    </button>
+                  );
+                })}
+                {(m.creatorIds ?? []).length === 0 && (
+                  <span className="text-xs text-amber-300/80">None yet: this seat can&apos;t do anything until you tick a creator.</span>
+                )}
               </div>
             )}
           </div>
         ))}
-        {data.members.length === 0 && (
-          <p className="text-sm text-white/40">No staff seats yet.</p>
+        {isOwner && data.invites.filter((inv) => !!inv.role).map((inv) => (
+          <InviteRow key={inv.id} invite={inv} what={`Invited as ${inv.role}`} busyKeys={busyKeys} onResend={() => runGuarded(`resend:${inv.id}`, { action: "resend_invite", inviteId: inv.id })} onRevoke={() => runGuarded(`revoke:${inv.id}`, { action: "revoke_invite", inviteId: inv.id })} />
+        ))}
+        {staff.length === 0 && !data.invites.some((inv) => !!inv.role) && (
+          <p className="text-sm text-muted">No staff seats yet.</p>
         )}
+      </div>
+
+      {canLeave === "staff" && <LeaveAgency kind="staff" orgId={org.id} orgName={org.name} onLeft={() => setLeft("staff")} />}
+      {/* WG-03: every other tie (a seat in another agency, the agency managing this account) has its own Leave. */}
+      {ties.filter((tie) => tie.kind === "creator" && tie.ownerActive === false).map((tie) => (
+        <p key={`suspended-${tie.orgId}`} role="alert" data-testid="agency-managing-owner-suspended" className="mt-4 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm text-amber-200 text-pretty">
+          The owner account of {tie.orgName}, which manages your creator account, is suspended. Its staff can&apos;t act on your account until FanFunnel reactivates it; your own dashboard keeps working.
+        </p>
+      ))}
+      {ties.filter((tie): tie is Tie & { kind: "staff" | "creator" } => tie.kind !== "owner" && tie.orgId !== org.id).map((tie) => (
+        <LeaveAgency key={tie.orgId} kind={tie.kind} orgId={tie.orgId} orgName={tie.orgName} onLeft={() => { setLoading(true); void refresh(); }} />
+      ))}
+    </div>
+  );
+}
+
+/** WG-06: a pending or run-out invitation with Resend and Revoke. */
+function InviteRow({ invite, what, busyKeys, onResend, onRevoke }: { invite: Invite; what: string; busyKeys: Set<string>; onResend: () => void; onRevoke: () => void }) {
+  const expiresOn = invite.expiresAt && Number.isFinite(Date.parse(invite.expiresAt)) ? new Date(invite.expiresAt).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : null;
+  return (
+    <div data-testid="agency-invite" data-expired={invite.expired ? "true" : undefined} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-line bg-surface p-4">
+      <div className="min-w-0">
+        <p className="text-sm text-muted">{invite.email}</p>
+        <p className={`text-xs ${invite.expired ? "text-red-300/90" : "text-amber-300/80"}`}>
+          {invite.expired ? `${what} · expired${expiresOn ? ` on ${expiresOn}` : ""} — re-send it to give them another ${AGENCY_INVITE_TTL_DAYS} days` : `${what} · awaiting acceptance${expiresOn ? ` · expires ${expiresOn}` : ""}`}
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <button onClick={onResend} disabled={busyKeys.has(`resend:${invite.id}`)} className="min-h-9 rounded-md border border-line px-2.5 text-xs font-semibold text-ink hover:bg-surface-2 disabled:opacity-50">
+          {busyKeys.has(`resend:${invite.id}`) ? "Sending…" : "Resend"}
+        </button>
+        <button onClick={onRevoke} disabled={busyKeys.has(`revoke:${invite.id}`)} className="min-h-9 rounded-md border border-line px-2.5 text-xs text-muted hover:text-ink disabled:opacity-50">
+          Revoke
+        </button>
       </div>
     </div>
   );
 }
 
-function CreateOrg({ onCreate }: { onCreate: (name: string) => Promise<boolean> }) {
+function ConfirmRemove({
+  text,
+  cta,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  text: string;
+  cta: string;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div role="group" aria-label="Confirm removal" className="mt-3 w-full rounded-xl border border-red-400/35 bg-red-400/10 p-3 text-sm text-ink">
+      <p className="text-pretty">{text}</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={busy}
+          className="rounded-md border border-red-400/60 bg-red-500/25 px-3 py-1.5 text-xs font-bold text-ink hover:bg-red-500/35 disabled:opacity-50"
+        >
+          {busy ? "Removing…" : cta}
+        </button>
+        <button type="button" onClick={onCancel} disabled={busy} className="rounded-md border border-line px-3 py-1.5 text-xs text-muted hover:text-ink">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** A suspended seat or owner: the console is paused, and nothing was lost. */
+function SuspendedAgency() {
+  return (
+    <div className="mx-auto max-w-xl px-5 py-16 text-ink" data-testid="agency-suspended">
+      <SuspendedBanner suspended />
+      <h1 className="text-xl font-bold">Agency console paused</h1>
+      <p className="mt-2 text-sm text-muted text-pretty">
+        While this account is suspended it can&apos;t open an agency console or a seat. Nothing has been removed: your agency, seats and
+        invitations are as you left them and come back when the account is reactivated.
+      </p>
+      <Link href="/dashboard" className="mt-5 inline-flex min-h-11 items-center rounded-lg border border-line px-4 text-sm font-semibold text-muted hover:bg-surface-2 hover:text-ink">
+        ← My dashboard
+      </Link>
+    </div>
+  );
+}
+
+function CreateOrg({ onCreate, demo, msg }: { onCreate: (name: string) => Promise<boolean>; demo: boolean; msg: string | null }) {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   return (
-    <div className="mx-auto max-w-md px-5 py-24 text-center text-white">
-      <p className="text-5xl">🏢</p>
+    <div className="mx-auto max-w-md px-5 py-24 text-center text-ink">
+      <p className="text-5xl" aria-hidden="true">🏢</p>
       <h1 className="mt-4 text-xl font-bold">Start your agency</h1>
-      <p className="mt-2 text-sm text-white/50">
+      <p className="mt-2 text-sm text-muted">
         Manage multiple creators and give staff scoped access — chatters, fulfillers,
         and managers each see only what they should.
       </p>
+      {demo && (
+        <p data-testid="agency-demo-only" className="mt-4 rounded-xl border border-line px-4 py-3 text-sm text-muted">
+          Demo only: agencies need a connected database. You can look around, but nothing here is saved.
+        </p>
+      )}
+      {msg && (
+        <p role="alert" className="mt-4 text-sm text-amber-200">
+          {msg}
+        </p>
+      )}
       <input
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="Agency name"
-        className="mt-6 w-full rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-center"
+        aria-label="Agency name"
+        className="ff-input mt-6 w-full text-center"
       />
       <button
         onClick={async () => {
@@ -321,11 +589,11 @@ function CreateOrg({ onCreate }: { onCreate: (name: string) => Promise<boolean> 
           }
         }}
         disabled={busy || !name.trim()}
-        className="mt-3 w-full rounded-xl bg-pink-500 py-2.5 font-bold hover:bg-pink-400 disabled:opacity-50"
+        className="mt-3 w-full btn-brand rounded-xl py-2.5 font-bold"
       >
         {busy ? "Creating…" : "Create agency"}
       </button>
-      <Link href="/dashboard" className="mt-4 inline-block text-sm text-white/50 hover:text-white">
+      <Link href="/dashboard" className="mt-4 inline-block text-sm text-muted hover:text-ink">
         ← Back to dashboard
       </Link>
     </div>
@@ -334,11 +602,15 @@ function CreateOrg({ onCreate }: { onCreate: (name: string) => Promise<boolean> 
 
 function AddByEmail({
   placeholder,
+  label,
+  describedBy,
   withRole,
   cta = "Add",
   onAdd,
 }: {
   placeholder: string;
+  label: string;
+  describedBy?: string;
   withRole?: boolean;
   cta?: string;
   onAdd: (email: string, role?: string) => Promise<boolean>;
@@ -347,18 +619,22 @@ function AddByEmail({
   const [role, setRole] = useState<string>("analyst");
   const [busy, setBusy] = useState(false);
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
       <input
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         placeholder={placeholder}
-        className="w-44 rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-sm sm:w-52"
+        type="email"
+        aria-label={label}
+        aria-describedby={describedBy}
+        className="ff-input w-44 min-w-0 text-sm sm:w-52"
       />
       {withRole && (
         <select
           value={role}
           onChange={(e) => setRole(e.target.value)}
-          className="rounded-lg border border-white/15 bg-white/5 px-2 py-1.5 text-sm capitalize"
+          aria-label="Staff role"
+          className="ff-input w-auto text-sm capitalize"
         >
           {ROLES.map((r) => (
             <option key={r} value={r}>
@@ -379,10 +655,34 @@ function AddByEmail({
           }
         }}
         disabled={busy}
-        className="rounded-lg bg-pink-500 px-3 py-1.5 text-sm font-bold hover:bg-pink-400 disabled:opacity-50"
+        className="btn-brand min-h-9 rounded-lg px-3 text-sm font-bold"
       >
         {cta}
       </button>
+    </div>
+  );
+}
+
+/** A45: a creator an agency manages has no console; say what that means,
+ *  and let them leave it. */
+function ManagedByAgency({ orgId, orgName, ownerActive, onLeft }: { orgId: string | null; orgName?: string | null; ownerActive?: boolean | null; onLeft: () => void }) {
+  return (
+    <div data-testid="agency-managed" className="mx-auto max-w-md px-5 py-24 text-center text-ink">
+      <h1 className="text-xl font-bold">{orgName ? `You're part of ${orgName}` : "You're part of an agency"}</h1>
+      {ownerActive === false && (
+        <p role="alert" data-testid="agency-owner-suspended" className="mt-4 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-left text-sm text-amber-200 text-pretty">
+          This agency&apos;s owner account is suspended, so its staff can&apos;t act on your account until FanFunnel reactivates it. Your own dashboard, games and fan links keep working{orgId ? ", and you can leave the agency below." : "."}
+        </p>
+      )}
+      <p className="mt-3 text-sm text-muted text-pretty">
+        You accepted an agency&apos;s invitation. Its owner and managers can run your games, campaigns, fans and
+        fulfilment, and staff it assigns to you can answer your inbox or fulfil your prizes. Everything they do shows up
+        in your own dashboard. The agency owner can remove you at any time{orgId ? ", and you can leave it yourself below." : "; ask them if you want to leave."}
+      </p>
+      <Link href="/dashboard" className="mt-6 inline-flex min-h-10 items-center rounded-lg border border-line px-4 text-sm font-semibold text-muted hover:bg-surface-2 hover:text-ink">
+        ← Back to dashboard
+      </Link>
+      {orgId && <LeaveAgency kind="creator" orgId={orgId} onLeft={onLeft} />}
     </div>
   );
 }

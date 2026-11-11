@@ -1,0 +1,106 @@
+import assert from "node:assert/strict";
+import { pickLiveGame, resolvePlayingGame, scheduleTakeover, playReasonText, type LiveGameCandidate } from "./liveGame";
+import { campaignGame, campaignsUsing, defaultCampaignGameId, linkGame, liveExplanation, gameOptionLabel, pinUnavailableReason } from "@/components/dashboard/gameAssignment";
+
+// The owner's report: "Test Scratch" was scheduled now → Oct 31 while
+// "Spin to Win" was active, so every unpinned link (including one whose
+// screen said "Spin to Win") played the scratch ticket. The dashboard must
+// explain exactly what the server resolver decides.
+const NOW = new Date("2026-10-29T12:00:00Z");
+type G = LiveGameCandidate & { title: string };
+const game = (id: string, patch: Partial<G> = {}): G => ({ id, title: id, gameKind: "wheel", gameReady: true, isActive: false, archivedAt: null,
+  activeFrom: null, activeUntil: null, createdAt: "2026-01-01T00:00:00Z", ...patch });
+let passed = 0;
+const eq = (actual: unknown, expected: unknown, label: string) => { assert.deepEqual(actual, expected, label); passed++; };
+
+const spin = game("spin", { title: "Spin to Win", isActive: true });
+const scratch = game("scratch", { title: "Test Scratch", gameKind: "scratch", activeFrom: "2026-10-29T11:00:00Z", activeUntil: "2026-10-31T23:00:00Z", createdAt: "2026-10-20T00:00:00Z" });
+const games = [spin, scratch];
+
+// Schedule overrides the active game.
+let live = pickLiveGame(games, NOW);
+eq(live?.game.id, "scratch", "an open schedule beats the active game");
+eq(live?.reason.kind, "scheduled", "reason names the schedule");
+const explained = liveExplanation(games, NOW);
+eq(explained?.overriddenActive?.id, "spin", "the paused active game is named");
+assert.ok(explained?.because.startsWith("it's scheduled until"), "plain-language reason"); passed++;
+eq(pickLiveGame(games, new Date("2026-11-01T00:00:00Z"))?.game.id, "spin", "the active game comes back after the window");
+eq(liveExplanation([spin, game("w2")], NOW)?.because, "it's your active game", "active reason text");
+eq(pickLiveGame([game("b", { createdAt: "2026-02-01T00:00:00Z" }), game("a2", { createdAt: "2026-03-01T00:00:00Z" })], NOW)?.reason.kind, "oldest", "fallback is the oldest");
+
+// Pin overrides schedule; archived / not-ready pins are ignored (0061: a ready bingo game is a valid pin).
+eq(resolvePlayingGame(games, { pinnedWheelId: "spin" }, NOW)?.game.id, "spin", "a campaign's game beats an open schedule");
+eq(resolvePlayingGame(games, { pinnedWheelId: "spin" }, NOW)?.reason.kind, "pinned", "pinned reason");
+const bingo = game("bingo", { title: "House Bingo", gameKind: "bingo", createdAt: "2026-10-25T00:00:00Z" });
+eq(resolvePlayingGame([...games, bingo], { pinnedWheelId: "bingo" }, NOW)?.reason.kind, "pinned", "a ready bingo game can be pinned (0061)");
+eq(gameOptionLabel(bingo), "House Bingo · Bingo", "a ready bingo game is offered without a reason against it");
+for (const [label, patch] of [["archived", { archivedAt: "2026-10-01T00:00:00Z" }], ["not ready", { gameReady: false }], ["bingo draft", { gameKind: "bingo" as const, gameReady: false }], ["ready flag missing", { gameReady: undefined }]] as const) {
+  const bad = game("pinned", { title: "Pinned", ...patch });
+  const result = resolvePlayingGame([...games, bad], { pinnedWheelId: "pinned" }, NOW);
+  eq(result?.game.id, "scratch", `${label} pin is ignored for the live game`);
+  eq(result?.ignoredPin && result.ignoredPin !== "missing" ? result.ignoredPin.id : null, "pinned", `${label} pin is reported as ignored`);
+  const card = campaignGame({ pinnedWheelId: "pinned" }, [...games, bad], NOW);
+  eq(card.mode === "follows" ? card.ignored?.title : null, "Pinned", `${label} pin explained on the campaign card`);
+  assert.ok(/\(/.test(gameOptionLabel(bad)), `${label} game option says why it can't be chosen`); passed++;
+}
+eq(resolvePlayingGame(games, { pinnedWheelId: "gone" }, NOW)?.ignoredPin, "missing", "a deleted pin is reported");
+
+// Scratch vs wheel: a scratch pin plays scratch, a wheel link's stored id doesn't decide.
+eq(resolvePlayingGame([spin, game("s2", { gameKind: "scratch" })], { pinnedWheelId: "s2" }, NOW)?.game.gameKind, "scratch", "scratch pin plays scratch");
+const link = linkGame({ wheelId: "spin", campaignId: null }, [], games, NOW);
+eq([link?.game.id, link?.via], ["scratch", "live"], "a link made for Spin to Win plays the scheduled scratch (not passes[0].wheelId)");
+const pinnedLink = linkGame({ wheelId: "scratch", campaignId: "c1" }, [{ id: "c1", name: "Summer", pinnedWheelId: "spin" }], games, NOW);
+eq([pinnedLink?.game.id, pinnedLink?.via, pinnedLink?.because], ["spin", "campaign", "the campaign “Summer” is set to play it"], "campaign link plays the campaign's game");
+eq(linkGame({ wheelId: "stored", campaignId: null }, [], [game("stored", { gameKind: "scratch" }), game("x", { archivedAt: "2026-01-02T00:00:00Z" })], NOW)?.game.id, "stored", "only playable game is used");
+eq(linkGame({ wheelId: "x", campaignId: null }, [], [game("bingo", { gameKind: "bingo", gameReady: false })], NOW), null, "a bingo draft is never played from a link");
+eq(linkGame({ wheelId: "x", campaignId: null }, [], [bingo], NOW)?.game.id, "bingo", "a ready bingo game is served like any other (0061)");
+// 0061 ranking ties: several active games → oldest created_at (then id); open windows → latest start, newest created, then id.
+eq(pickLiveGame([game("z-new", { isActive: true, createdAt: "2026-03-01T00:00:00Z" }), game("a-old", { isActive: true, createdAt: "2026-02-01T00:00:00Z" })], NOW)?.game.id, "a-old", "several active games: the oldest wins, not the lowest id");
+eq(pickLiveGame([game("b", { isActive: true }), game("a", { isActive: true })], NOW)?.game.id, "a", "same created_at: id breaks the tie");
+eq(pickLiveGame([game("older-open", { activeUntil: "2026-12-01T00:00:00Z", createdAt: "2026-01-01T00:00:00Z" }), game("newer-open", { activeUntil: "2026-12-01T00:00:00Z", createdAt: "2026-05-01T00:00:00Z" })], NOW)?.game.id, "newer-open", "open-ended windows: newest created wins");
+eq(pickLiveGame([game("late", { activeFrom: "2026-10-29T11:30:00Z" }), game("early", { activeFrom: "2026-10-29T10:00:00Z", createdAt: "2026-06-01T00:00:00Z" })], NOW)?.game.id, "late", "latest start wins over a newer creation");
+const draftLink = linkGame({ wheelId: "spin", campaignId: "c2" }, [{ id: "c2", name: "Winter", pinnedWheelId: "draft" }], [...games, game("draft", { title: "Draft", gameReady: false })], NOW);
+eq([draftLink?.via, draftLink?.game.id, draftLink?.ignored], ["live", "scratch", { title: "Draft", why: "it's an unfinished draft" }], "a link whose campaign chose a draft says so and plays the live game");
+eq(linkGame({ wheelId: "spin", campaignId: "c3" }, [{ id: "c3", name: "Gone", pinnedWheelId: "deleted" }], games, NOW)?.ignored, { title: null, why: "it was deleted" }, "a deleted campaign game is reported on the link");
+eq(pinnedLink?.ignored, null, "a played campaign game is not reported as ignored");
+// QA 2026-11-04: a just-created game with no prizes is served by the resolver but every play
+// is refused (no_prizes), so the pickers must not offer it as a link's or campaign's game.
+eq(pinUnavailableReason({ ...scratch, prizeCount: 0 }), "add at least 2 prizes first", "an empty game can't be chosen");
+eq(gameOptionLabel({ ...scratch, prizeCount: 1 }), "Test Scratch · Scratch (add at least 2 prizes first)", "the option says why");
+eq(pinUnavailableReason({ ...scratch, prizeCount: 2 }), null, "a game with enough prizes can be chosen");
+eq(pinUnavailableReason({ ...scratch, prizeCount: 0, archivedAt: "2026-10-01T00:00:00Z" }), "archived", "archived still reads first");
+// QA 2026-11-04: the reason is read inside "is set to play X, but <why>, so …", so it must be a clause.
+for (const why of [draftLink?.ignored?.why, "it was deleted"]) assert.ok(why && /^it( was|'s| can't)/.test(why), `"${why}" reads as a clause`);
+// 0065: the link's own game (per-fan pin) comes before its campaign's game.
+const plainScratch = game("plain-scratch", { title: "Plain scratch", gameKind: "scratch", createdAt: "2026-10-26T00:00:00Z" });
+const fanGames = [...games, plainScratch];
+const fanLink = linkGame({ wheelId: "spin", campaignId: "c1", pinnedWheelId: "plain-scratch" }, [{ id: "c1", name: "Summer", pinnedWheelId: "spin" }], fanGames, NOW);
+eq([fanLink?.game.id, fanLink?.via, fanLink?.because, fanLink?.ignoredLinkPin], ["plain-scratch", "link", "this fan's link is set to play it", null], "a link's own game beats its campaign's game");
+eq(resolvePlayingGame(fanGames, { linkPinnedWheelId: "plain-scratch" }, NOW)?.reason.kind, "link_pinned", "link pin beats an open schedule");
+eq(resolvePlayingGame([...fanGames, game("future", { activeFrom: "2026-12-01T00:00:00Z" })], { linkPinnedWheelId: "future" }, NOW)?.game.id, "future", "a link pin ignores the game's own window, like a campaign pin");
+const archivedPin = linkGame({ wheelId: "spin", campaignId: "c1", pinnedWheelId: "old" }, [{ id: "c1", name: "Summer", pinnedWheelId: "spin" }], [...games, game("old", { title: "Old", archivedAt: "2026-10-01T00:00:00Z" })], NOW);
+eq([archivedPin?.game.id, archivedPin?.via, archivedPin?.ignoredLinkPin], ["spin", "campaign", { title: "Old", why: "it's archived" }], "an archived link pin falls through to the campaign's game and says why");
+const draftPin = resolvePlayingGame([...games, game("draft2", { gameReady: false })], { linkPinnedWheelId: "draft2" }, NOW);
+eq([draftPin?.game.id, draftPin?.reason.kind, typeof draftPin?.ignoredLinkPin === "object"], ["scratch", "scheduled", true], "a draft link pin falls through to the live game");
+eq(resolvePlayingGame(games, { linkPinnedWheelId: "another-creators-game" }, NOW)?.ignoredLinkPin, "missing", "a link pin outside the owner's games is ignored (and reported missing)");
+eq(resolvePlayingGame(games, { linkPinnedWheelId: null, pinnedWheelId: "spin" }, NOW)?.reason.kind, "pinned", "no link pin: the campaign's game as before");
+eq(campaignsUsing("spin", [{ id: "c1", name: "A", pinnedWheelId: "spin" }, { id: "c2", name: "B", pinnedWheelId: null }]).map((c) => c.id), ["c1"], "used-by list");
+eq(defaultCampaignGameId(games, NOW), "scratch", "new campaigns default to what fans get now");
+
+// Schedule takeover warning.
+const plain = game("plain", { title: "Plain", gameKind: "scratch" });
+let change = scheduleTakeover([spin, plain], "plain", { activeFrom: null, activeUntil: "2026-10-31T00:00:00Z" }, NOW);
+eq([change?.replaces.id, change?.startsNow], ["spin", true], "an open-now schedule replaces the active game");
+change = scheduleTakeover([spin, plain], "plain", { activeFrom: "2026-11-02T00:00:00Z", activeUntil: null }, NOW);
+eq([change?.replaces.id, change?.startsNow, change?.at.toISOString()], ["spin", false, "2026-11-02T00:00:00.000Z"], "a future schedule names what it replaces then");
+eq(scheduleTakeover([spin, plain], "plain", { activeFrom: null, activeUntil: "2026-10-01T00:00:00Z" }, NOW), null, "an expired window takes nothing over");
+eq(scheduleTakeover([spin, plain], "plain", { activeFrom: null, activeUntil: null }, NOW), null, "clearing a schedule never warns");
+eq(scheduleTakeover([spin, game("draft", { gameReady: false })], "draft", { activeFrom: null, activeUntil: "2026-10-31T00:00:00Z" }, NOW), null, "a draft can't take over");
+const later = game("later", { activeFrom: "2026-10-29T11:30:00Z" });
+eq(scheduleTakeover([spin, scratch, later], "scratch", { activeFrom: "2026-10-29T11:00:00Z", activeUntil: "2026-10-31T23:00:00Z" }, NOW), null, "a schedule that loses to a later start takes nothing over");
+eq(scheduleTakeover([spin, scratch], "scratch", { activeFrom: "2026-10-29T11:00:00Z", activeUntil: "2026-10-31T23:00:00Z" }, NOW)?.replaces.id, "spin", "re-saving an open schedule still names the active game");
+
+eq(playReasonText({ kind: "scheduled", from: null, until: null }), "it's scheduled with no end date", "open-ended schedule text");
+live = pickLiveGame([], NOW);
+eq(live, null, "no games, no live game");
+console.log(`live game explanation: ${passed} checks passed`);

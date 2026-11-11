@@ -7,19 +7,23 @@ import {
   addOrgMember,
   removeOrgMember,
   scopeOrgCreator,
+  resendOrgInvite,
   type OrgRole,
 } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { limitRoute } from "@/lib/api/limit";
 
 // Owner-guarded agency mutations. Each RPC re-checks ownership server-side, so
 // this route only dispatches. Body: { action, ...args }.
 export async function POST(req: Request) {
+  const rateLimited = await limitRoute(req, "agency/manage:POST", "costly");
+  if (rateLimited) return rateLimited;
   const body = await parseJsonBody<Record<string, unknown>>(req);
   if (body === BAD_REQUEST) return badRequest();
   const action = body.action as string;
   const s = (k: string) => String(body[k] ?? "");
 
-  let result: { ok: true } | { error: string };
+  let result: { ok: true; invite?: "new" | "pending" | "unknown" } | { error: string };
   switch (action) {
     case "create_org":
       result = await createOrg(s("name"));
@@ -41,6 +45,9 @@ export async function POST(req: Request) {
       break;
     case "scope_creator":
       result = await scopeOrgCreator(s("memberId"), s("creatorId"), Boolean(body.on));
+      break;
+    case "resend_invite": // WG-06
+      result = await resendOrgInvite(s("inviteId"));
       break;
     default:
       return badRequest("unknown_action");
