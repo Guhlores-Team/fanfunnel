@@ -97,6 +97,9 @@ export default function RewardReveal({
     active: true,
     onEscape: requestClose,
     initialFocus: primaryRef,
+    // Keep the top (beat row, prize) in view on a short phone; the button is
+    // still focused and one scroll away.
+    preventScroll: true,
   });
 
   const share = async () => {
