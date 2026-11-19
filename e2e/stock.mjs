@@ -142,8 +142,17 @@ export async function stockJourney(page, { step, assert }, ctx) {
     const noOverlap = async (label, testId) => {
       const beat = page.getByTestId(testId);
       await beat.waitFor({ timeout: 4000 });
-      await page.waitForTimeout(350);
-      const b = await beat.locator(":scope > *").first().boundingBox();
+      // The beat springs in from 10px above; on a slow runner 350ms can still be
+      // mid-animation. Measure once two reads 60ms apart agree (it hides at 1.7s).
+      const pill = beat.locator(":scope > *").first();
+      let b = await pill.boundingBox();
+      for (let i = 0; i < 16; i++) {
+        await page.waitForTimeout(60);
+        const next = await pill.boundingBox();
+        const settled = b && next && Math.abs(next.y - b.y) < 0.5 && Math.abs(next.x - b.x) < 0.5;
+        b = next;
+        if (settled) break;
+      }
       const c = await page.getByRole("dialog", { name: /^You won / }).boundingBox();
       assert(b && c, `${label}: both are on screen`);
       assert(b.y + b.height <= c.y + 0.5, `${label}: the popup ends (${Math.round(b.y + b.height)}) above the card (${Math.round(c.y)})`);
