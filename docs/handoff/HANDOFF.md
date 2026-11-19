@@ -31,7 +31,8 @@ lifted; work resumed and built 0060–0066.)
 - **TEST database (`snmcrmhgevfqggxdiomu`) is at 0061.** 0062–0066 have not been applied to
   any hosted database.
 - **Preview (TEST):** https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app
-- **Live:** https://fanfunnel.vercel.app (prod database `ttlogfmogcccwiraaoae`). Unchanged; an
+- **Live:** https://fanfunnel.app (domain bought 2026-11-19; https://fanfunnel.vercel.app serves the same
+  site until it redirects on go-live day; prod database `ttlogfmogcccwiraaoae`). Unchanged; an
   old July build. **`main` = production. Never push or merge to `main`** without (a) green CI
   and (b) the owner's explicit "tested on Preview, go".
 - **Waiting on the owner's "go"** to move `orch/fixes` onto `dashboard-redesign`, apply
@@ -112,8 +113,8 @@ database, invite expiry, last-active-admin, private rate-limit keys).
   or pasted in chat. Never ask them to paste secrets/API keys into chat — keys go straight into
   Vercel/Supabase. Purchases (domain, plans) only on their explicit go-ahead with a confirmed price.
 - Decisions made: operator "FanFunnel" (brand only, no entity); Massachusetts law; contact
-  `support@easysimplesites.org` (a FanFunnel domain will be bought later; e.g. fanfunnel.app $9.99
-  then $15/yr — .com/.co are taken); worldwide audience; creator fees "free for now, fees later";
+  `support@fanfunnel.app` (domain `fanfunnel.app` bought 2026-11-19 through Vercel, auto-renew on;
+  .com/.co are taken); worldwide audience; creator fees "free for now, fees later";
   30-day change notice; error monitoring built in-house with email (no Sentry); all roadmap items
   before alpha. Every other roadmap decision uses the proposal's recommended default behind a
   named constant (listed per item in PROPOSALS.md §2) — walk the owner through them a few at a time.

@@ -40,7 +40,7 @@ async function main() {
   check("the toggle still ends in 'Request access' only in sign-in mode", /Already have a login\? Sign in/.test(html));
 
   html = render({ suspended: "1" });
-  check("WU-01: ?suspended=1 shows the suspended notice with the support address", html.includes('data-testid="login-suspended"') && /support@easysimplesites\.org/.test(html) && /suspended/.test(html));
+  check("WU-01: ?suspended=1 shows the suspended notice with the support address", html.includes('data-testid="login-suspended"') && /support@fanfunnel\.app/.test(html) && /suspended/.test(html));
 
   html = render({ error: "auth_link", type: "signup", reason: "expired" });
   check("WU-03: a used confirmation link says 'sign in'", html.includes('data-link-type="signup"') && /already used or has expired/.test(html) && /Sign in below/.test(html) && /Resend confirmation email/.test(html));

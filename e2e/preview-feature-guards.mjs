@@ -2,7 +2,7 @@
 // never fork its immutable Preview, exact source, project/team or TEST checks.
 import { TEST_ORIGIN, previewPerfEnvironment, refuse } from "./preview-lcp-guards.mjs";
 
-export const SHARED_GUARD_SHA256 = "6fed22a81a5f7af05b41319661dd7cb53c8018abf497893323aebd798f54afb7";
+export const SHARED_GUARD_SHA256 = "e3f91da2f28b01fae02ec780d46a0ba2fdc71714866423d70e05ee280531217a";
 export const MAX_BINGO_PLAYS = 36;
 export const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 export const SAFE_SHARE_ID = /^[A-Za-z0-9_-]{12,80}$/;

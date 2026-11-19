@@ -52,8 +52,7 @@ What this needs from the project settings (Authentication → URL Configuration)
 
 - **Site URL** = the one origin the e-mails must open: on TEST the Preview alias
   (`https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app`), on
-  LIVE the production domain (`https://fanfunnel.vercel.app` until a custom domain
-  replaces it). A Preview on another branch receives its links on the alias.
+  LIVE the production domain (`https://fanfunnel.app`). A Preview on another branch receives its links on the alias.
 - **Redirect URLs** = exact origins the team owns only (`https://<origin>/**`), no
   `*` in the host. They no longer shape the e-mail link; Supabase still checks
   them for the legacy `?code=` flow.

@@ -33,10 +33,10 @@ Once live, the daily / weekly / release routine is `docs/OWNER_CHECKLIST.md`; in
       → turn on "Prevent use of leaked passwords" (may require Pro — then do it after step 16).
 - [ ] 10. **Confirm email stays ON** (Sign In / Providers → Email → "Confirm email") in both projects.
 - [ ] 11. **Site URL** (every sign-in, reset and invitation e-mail links to this address and nothing else):
-      Live → https://supabase.com/dashboard/project/ttlogfmogcccwiraaoae/auth/url-configuration → Site URL = `https://fanfunnel.vercel.app` (change to the new domain in Stage 4)
+      Live → https://supabase.com/dashboard/project/ttlogfmogcccwiraaoae/auth/url-configuration → Site URL = `https://fanfunnel.app` (the live domain since 2026-11-19)
       Test → https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/auth/url-configuration → Site URL = `https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app`
 - [ ] 11a. **Redirect URLs, exact only** (same two pages, "Redirect URLs"): keep exactly
-      Live: `https://fanfunnel.vercel.app/**` — Test: `https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app/**` and `http://localhost:3000/**`.
+      Live: `https://fanfunnel.app/**` (plus `https://fanfunnel.vercel.app/**` for one week after go-live, then delete it) — Test: `https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app/**` and `http://localhost:3000/**`.
       **Delete** any entry with a `*` in the host, such as `https://*.vercel.app/**` or `https://fanfunnel-*-easy-simple-sites.vercel.app/**`: an outsider can register a Vercel site with a matching name.
 - [ ] 11b. **Paste the five e-mail templates** (without them a link only works in the browser that asked for it):
       Test now: https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/auth/templates — Live at go-live: https://supabase.com/dashboard/project/ttlogfmogcccwiraaoae/auth/templates
@@ -71,20 +71,19 @@ Once live, the daily / weekly / release routine is `docs/OWNER_CHECKLIST.md`; in
 
 ## Stage 4 — Buy & connect (paid)
 
-- [ ] 15. **Domain** — pick one (e.g. `fanfunnel.app` $9.99 then $15/yr). Buy at https://vercel.com/domains,
-      or tell me the exact domain and I'll buy it through Vercel after you confirm the price.
-      Then: turn on auto-renew. Connect it with `docs/CUSTOM_DOMAIN.md` (seven short steps: Vercel domain,
-      DNS, the old address redirecting, `NEXT_PUBLIC_SITE_URL`, Supabase LIVE Site URL and Redirect URLs,
-      e-mail sender, the check). Tell me the domain: I update the security file, the contact address and the docs.
-      Switch before real creators and fans arrive: sign-ins, installed apps and push belong to one address.
+- [x] 15. **Domain — done 2026-11-19:** `fanfunnel.app` bought through Vercel ($9.99 first year, auto-renew on),
+      added to the project with `www.fanfunnel.app` redirecting to it, padlock live, `NEXT_PUBLIC_SITE_URL` and
+      `ADMIN_EMAILS` set for Production, DMARC (`p=none`) added; security file, contact address and docs updated
+      on the branch. Still open, all in `docs/CUSTOM_DOMAIN.md`: the old address redirecting (go-live day, 2c),
+      Supabase LIVE Site URL and Redirect URLs (4), e-mail on the new domain (5, step 18), the check (7).
 - [ ] 16. **Supabase Pro** for the live project (~$25/mo — daily backups, no auto-pause):
       https://supabase.com/dashboard/org/gmsididujlbybxtzhgxl/billing → Upgrade.
       Optional add-on: Point-in-Time Recovery (undo to any minute).
 - [ ] 17. **Vercel Pro** (~$20/mo/member — Hobby is non-commercial only):
       https://vercel.com/easy-simple-sites → Settings → Billing → Upgrade to Pro.
-- [ ] 18. **support@ inbox** (blocks go-live: today `support@easysimplesites.org` has no mail records and bounces, and it is
-      the only contact on the Terms, Privacy, 404 and security pages) on the new domain — free forwarding to Gmail (e.g. https://improvmx.com),
-      or Google Workspace (~$7/mo). (Me: add the DNS records once you pick.)
+- [ ] 18. **support@fanfunnel.app inbox** (blocks go-live: it is the only contact on the Terms, Privacy, 404 and
+      security pages, and the domain has no mail records yet, so mail to it bounces) — free forwarding to Gmail
+      (e.g. https://improvmx.com), or Google Workspace (~$7/mo). (Me: add the DNS records once you pick.)
 
 ## Stage 5 — Keys & alerts (after the monitoring feature lands)
 
@@ -271,7 +270,7 @@ Answer or do each of these before real fans arrive (ops audit, batch 6). Inciden
 - [ ] 32. **Supabase plan for LIVE:** which plan is it on? Is a daily backup listed under Database → Backups? Do you want Point-in-Time Recovery (PITR)? (Free has no self-serve restore and auto-pauses; see step 16.)
 - [ ] 33. **Upstash plan for Production:** which plan, and what monthly command allowance? (Estimate: one 30-minute event with 200 fans uses roughly 60–90k commands.) When it runs out, rate limits quietly become per-instance; System health shows the last fallback.
 - [ ] 34. **Resend plan and limits:** which plan, what daily/monthly send limit? One account carries alerts, creator account mail and Supabase Auth e-mail (password resets).
-- [ ] 35. **Support mailbox:** `easysimplesites.org` has no MX record, so mail to `support@easysimplesites.org` bounces. Which mailbox should it reach (forwarding or Workspace, step 18), and who watches it during events? Then send it a test e-mail (`docs/GO_LIVE.md` §9).
+- [ ] 35. **Support mailbox:** `fanfunnel.app` has no MX record yet, so mail to `support@fanfunnel.app` bounces. Which mailbox should it reach (forwarding or Workspace, step 18), and who watches it during events? Then send it a test e-mail (`docs/GO_LIVE.md` §9).
 - [ ] 36. **Second admin:** who is it? Enrol them with their own two-factor before go-live, so one lost phone cannot lock everyone out (`docs/RUNBOOK.md`, "Creator locked out").
 - [ ] 37. **Vercel team members:** is the team just you? Fan links (`/spin/<token>`) appear in Vercel's request logs, so keep the team to people who may see them, and filter `/spin/*` before adding any log drain.
 - [ ] 38. **Ask the lawyer:** is a privacy contact that bounces acceptable for a soft launch (item 35)? Is deleting declined creator requests by hand every 90 days acceptable until it is automated (`docs/DATA_RETENTION.md`)?

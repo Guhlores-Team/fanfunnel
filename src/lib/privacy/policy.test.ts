@@ -63,7 +63,7 @@ assert.match(terms, /same rule covers all public text: prize names and descripti
 assert.ok(!/creator can send (you )?a new one/.test(terms), "the Terms must not promise a new link after a pause");
 assert.match(terms, /Pausing is permanent for that link and its records/, "the Terms say pausing is permanent");
 // T19 + T13 (COPY_FIXES 12): an abuse contact and the declined-request period.
-assert.match(text, /Report abuse or a safety concern.*email support@easysimplesites\.org/, "the Privacy Policy names the abuse contact");
+assert.match(text, /Report abuse or a safety concern.*email support@fanfunnel\.app/, "the Privacy Policy names the abuse contact");
 assert.match(text, /Access requests:.*90 days after a request is declined.*Safety reports: see above/, "declined access requests have a stated period");
 assert.match(terms, /blocked fan’s link no longer spins.*chat.*wishlist.*leaderboard/, "what blocking stops is stated");
 // A7 follow-up: the Terms describe the games a spin can play.

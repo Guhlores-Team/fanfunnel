@@ -57,7 +57,7 @@ Configuration**:
 
 | Project | Site URL | Redirect URLs (exact origins only, no `*` in a host) |
 |---|---|---|
-| LIVE `ttlogfmogcccwiraaoae` | `https://fanfunnel.vercel.app` (the custom domain once it exists) | `https://fanfunnel.vercel.app/**` |
+| LIVE `ttlogfmogcccwiraaoae` | `https://fanfunnel.app` | `https://fanfunnel.app/**` (keep `https://fanfunnel.vercel.app/**` one week after the switch) |
 | TEST `snmcrmhgevfqggxdiomu` | `https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app` (the stable Preview alias) | that alias with `/**`, and `http://localhost:3000/**` for local work |
 
 Remove any existing entry such as `https://*.vercel.app/**` or

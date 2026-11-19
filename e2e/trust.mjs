@@ -126,6 +126,6 @@ export async function trustJourney(page, { step, assert }, ctx) {
     const res = await ctx.request.get(BASE + "/.well-known/security.txt");
     assert(res.ok(), `security.txt is served (got ${res.status()})`);
     const text = await res.text();
-    assert(/^Contact: mailto:support@easysimplesites\.org$/m.test(text) && /^Expires: /m.test(text) && /^Preferred-Languages: en$/m.test(text), "with Contact, Expires and Preferred-Languages");
+    assert(/^Contact: mailto:support@fanfunnel\.app$/m.test(text) && /^Expires: /m.test(text) && /^Preferred-Languages: en$/m.test(text), "with Contact, Expires and Preferred-Languages");
   });
 }

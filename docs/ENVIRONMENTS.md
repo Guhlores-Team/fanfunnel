@@ -6,7 +6,7 @@ FanFunnel has exactly two environments. Everything is paired: one branch, one Ve
 |---|---|---|
 | GitHub branch | `main` | `dashboard-redesign`, and any other branch |
 | Vercel environment | **Production** | **Preview** |
-| Website | https://fanfunnel.vercel.app | `https://fanfunnel-git-<branch>-easy-simple-sites.vercel.app`, e.g. https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app |
+| Website | https://fanfunnel.app (also https://fanfunnel.vercel.app until it redirects on go-live day) | `https://fanfunnel-git-<branch>-easy-simple-sites.vercel.app`, e.g. https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app |
 | Supabase project | `ttlogfmogcccwiraaoae` (LIVE) | `snmcrmhgevfqggxdiomu` (TEST) |
 | DB migrations applied by | workflow **Supabase migrations**, job `db-migrations-production`, on every push to `main` (after the owner approves it in the `production` environment and a LIVE backup is verified) | workflow **Supabase migrations**, job `test`, on every PR (the `supabase` job of **E2E (real Supabase)** waits for it) |
 | Error console (`?debug=1`, admins) | off: never shipped | on (`NEXT_PUBLIC_ENABLE_DEBUG=1`, Preview only) |

@@ -226,9 +226,8 @@ Just say **"keys are in"**. Don't send any values. I will then:
   from the **Site URL** only, never from the redirect the requester chose.
   - **TEST:** Site URL = the Preview alias
     `https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app`.
-  - **LIVE:** Site URL = the production domain (`https://fanfunnel.vercel.app` until a custom domain
-    replaces it).
-  - **Redirect URLs (both):** exact origins the team owns only, such as `https://fanfunnel.vercel.app/**`
+  - **LIVE:** Site URL = the production domain (`https://fanfunnel.app`).
+  - **Redirect URLs (both):** exact origins the team owns only, such as `https://fanfunnel.app/**`
     and the Preview alias. Remove any entry with `*` in the host (`https://*.vercel.app/**`,
     `https://*-easy-simple-sites.vercel.app/**`): an outsider can register a matching Vercel host.
   - Then paste the five link templates from `supabase/templates/` (recovery, confirmation, magic link,

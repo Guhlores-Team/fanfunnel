@@ -10,7 +10,7 @@ The owner approved parallel work on new branches with their own PRs. Your prompt
 ## Binding rules
 - Read `AGENTS.md` first (Supabase auth contract + preview-before-prod). It is binding. "This is NOT the Next.js you know": check `node_modules/next/dist/docs/` before using unfamiliar Next APIs.
 - **Never merge anything. Never push to `main`, `dashboard-redesign`, or any branch except your own.** Don't delete branches. Don't force-push.
-- Never touch the prod Supabase project or the live site (`fanfunnel.vercel.app`). Don't use Supabase/Vercel MCP tools at all.
+- Never touch the prod Supabase project or the live site (`fanfunnel.app`, `fanfunnel.vercel.app`). Don't use Supabase/Vercel MCP tools at all.
 - Don't change auth, RLS policies, grants, the spin engine's fairness logic, or API contracts unless your item IS that change. In that case answer AGENTS.md's four acceptance questions in the PR with file:line evidence.
 - No new dependencies unless unavoidable (then justify it in the PR).
 - Never weaken, skip or delete a test or CI check. Updating a selector so the test still asserts the same thing is fine.

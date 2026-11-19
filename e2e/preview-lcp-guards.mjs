@@ -66,6 +66,7 @@ export function checkPreflightRecord(config, record) {
   return { deploymentId: record.deploymentId, target: "preview", sourceSha: config.expectedSha, projectVerified: true, teamVerified: true };
 }
 
+const PRODUCTION_ALIASES = ["fanfunnel.vercel.app", "fanfunnel.app", "www.fanfunnel.app"];
 export function checkDeploymentMetadata(config, deployment, project) {
   if (!deployment || typeof deployment !== "object" || !project || typeof project !== "object") refuse("INVALID_DEPLOYMENT_METADATA");
   if (deployment.projectId !== PREVIEW_PROJECT || project.id !== PREVIEW_PROJECT) refuse("WRONG_VERCEL_PROJECT");
@@ -76,7 +77,7 @@ export function checkDeploymentMetadata(config, deployment, project) {
   if (deployment.id === production.id || deployment.url === production.url || deployment.isProduction === true) refuse("PRODUCTION_DEPLOYMENT_REFUSED");
   const aliases = [...(Array.isArray(deployment.alias) ? deployment.alias : []), ...(Array.isArray(deployment.aliases) ? deployment.aliases : [])]
     .map(alias => typeof alias === "string" ? alias : alias?.alias);
-  if (aliases.includes("fanfunnel.vercel.app")) refuse("PRODUCTION_DEPLOYMENT_REFUSED");
+  if (aliases.some(alias => PRODUCTION_ALIASES.includes(alias))) refuse("PRODUCTION_DEPLOYMENT_REFUSED");
   if (deployment.readyState !== "READY" || typeof deployment.id !== "string" || !deployment.id.startsWith("dpl_")) refuse("PREVIEW_NOT_READY");
   const origin = immutablePreviewOrigin(`https://${deployment.url}`);
   if (origin !== config.origin) refuse("DEPLOYMENT_URL_MISMATCH");

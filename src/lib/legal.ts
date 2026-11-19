@@ -25,7 +25,7 @@ export const LEGAL = {
   /** Product name used in running text. */
   product: "FanFunnel",
   /** Legal, privacy, copyright and data-rights requests all go here. */
-  contactEmail: "support@easysimplesites.org",
+  contactEmail: "support@fanfunnel.app",
   /** Governing law for the Terms. */
   governingLaw: "the Commonwealth of Massachusetts, USA",
   /** Where disputes are heard, unless mandatory consumer law says otherwise. */
