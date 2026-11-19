@@ -13,6 +13,10 @@ One box at a time, top to bottom. Each step is one click or one thing to type.
 
 ## ✅ Already done
 
+**Progress (2026-11-19):** Part 2 done except 2.9; Part 3 done except 3.18 (waits for Supabase Pro).
+**Pick up at Part 4.**
+
+
 - ✅ Domain `fanfunnel.app` bought (auto-renews), connected, padlock on, `www` goes to it.
 - ✅ Every `@fanfunnel.app` address forwards to **fanfunnelsupport@gmail.com** (ImprovMX).
 - ✅ The support Gmail sends as **FanFunnel Support &lt;support@fanfunnel.app&gt;** (Resend, all checks PASS).
@@ -23,6 +27,11 @@ One box at a time, top to bottom. Each step is one click or one thing to type.
 ---
 
 ## Part 1: Supabase Pro (5 minutes, ~$25–35/month)
+
+**Owner's choice (2026-11-19): do this LAST, but at least 2 days before go-live day** (the first daily backup
+appears about a day after upgrading, and the release needs one). Steps 3.18 and 4.4 wait for it. Until then the
+free TEST database may fall asleep after a quiet week: if the Preview stops working, open
+https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu and click **Restore project**.
 
 **Why you need it:** the release button refuses to update the live database unless Supabase made a backup in
 the last 36 hours. Only Pro makes daily backups. Pro also stops the database from falling asleep (like the test
@@ -45,16 +54,16 @@ For each account: turn on two-step login with an **authenticator app** (Google A
 password manager), not text messages. When it shows **recovery codes**, save them in your password manager
 in a note named after the account.
 
-- [ ] 2.1 👤 Personal Gmail: https://myaccount.google.com/signinoptions/twosv → **Get started** → follow it.
-- [ ] 2.2 👤 Support Gmail (log in as fanfunnelsupport@gmail.com first): same link, same steps.
-- [ ] 2.3 👤 GitHub: https://github.com/settings/security → **Enable two-factor authentication**.
-- [ ] 2.4 👤 Vercel: https://vercel.com/account/settings/authentication → **Two-Factor Authentication** → Enable.
-- [ ] 2.5 👤 Supabase: https://supabase.com/dashboard/account/security → **Add new app** (under Multi-Factor).
-- [ ] 2.6 👤 Resend: https://resend.com/settings → **Security** → turn on two-factor.
-- [ ] 2.7 👤 Upstash: https://console.upstash.com → your avatar → **Account** → **Security**. (If you log in
+- [x] 2.1 👤 Personal Gmail: https://myaccount.google.com/signinoptions/twosv → **Get started** → follow it.
+- [x] 2.2 👤 Support Gmail (log in as fanfunnelsupport@gmail.com first): same link, same steps.
+- [x] 2.3 👤 GitHub: https://github.com/settings/security → **Enable two-factor authentication**.
+- [x] 2.4 👤 Vercel: https://vercel.com/account/settings/authentication → **Two-Factor Authentication** → Enable.
+- [x] 2.5 👤 Supabase: https://supabase.com/dashboard/account/security → **Add new app** (under Multi-Factor).
+- [x] 2.6 👤 Resend: https://resend.com/settings → **Security** → turn on two-factor.
+- [x] 2.7 👤 Upstash: https://console.upstash.com → your avatar → **Account** → **Security**. (If you log in
       with GitHub, step 2.3 already covers it; skip.)
-- [ ] 2.8 👤 ImprovMX: https://app.improvmx.com → **Account** → **Security** → two-factor.
-- [ ] 2.9 👤 Ask ashandlynx to do the same for every account they can log in to.
+- [x] 2.8 👤 ImprovMX: https://app.improvmx.com → **Account** → **Security** → two-factor.
+- [ ] 2.9 (only their Gmail matters: they use no other account) 👤 Ask ashandlynx to do the same for every account they can log in to.
 
 ---
 
@@ -65,33 +74,33 @@ TEST project = **fanfunnel test** (`snmcrmhgevfqggxdiomu`). Supabase sometimes r
 does not match exactly, pick the closest one and send me a screenshot if unsure.
 
 **3A. Make a Resend key for TEST e-mail**
-- [ ] 3.1 👤 Open https://resend.com/api-keys → **Create API key**.
-- [ ] 3.2 👤 Name: `fanfunnel-supabase-test`. Permission: **Sending access**. Domain: **fanfunnel.app**. → **Add**.
-- [ ] 3.3 👤 Click the copy button. Keep this tab open (you paste it in step 3.8).
+- [x] 3.1 👤 Open https://resend.com/api-keys → **Create API key**.
+- [x] 3.2 👤 Name: `fanfunnel-supabase-test`. Permission: **Sending access**. Domain: **fanfunnel.app**. → **Add**.
+- [x] 3.3 👤 Click the copy button. Keep this tab open (you paste it in step 3.8).
 
 **3B. E-mail sending (SMTP)**
-- [ ] 3.4 👤 Open https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/auth/smtp
-- [ ] 3.5 👤 Turn on **Enable Custom SMTP**.
-- [ ] 3.6 👤 Sender email: `account@fanfunnel.app`. Sender name: `FanFunnel`.
-- [ ] 3.7 👤 Host: `smtp.resend.com`. Port: `465`. Username: `resend`.
-- [ ] 3.8 👤 Password: paste the key from step 3.3. → **Save**.
+- [x] 3.4 👤 Open https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/auth/smtp
+- [x] 3.5 👤 Turn on **Enable Custom SMTP**.
+- [x] 3.6 👤 Sender email: `account@fanfunnel.app`. Sender name: `FanFunnel`.
+- [x] 3.7 👤 Host: `smtp.resend.com`. Port: `465`. Username: `resend`.
+- [x] 3.8 👤 Password: paste the key from step 3.3. → **Save**.
 
 **3C. Sign-in rules** (open https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/auth/providers →
 click **Email**)
-- [ ] 3.9 👤 **Confirm email**: ON.
-- [ ] 3.10 👤 **Secure email change**: ON.
-- [ ] 3.11 👤 **Minimum password length**: `8`.
-- [ ] 3.12 👤 **Email OTP Expiration**: `86400`. → **Save**.
+- [x] 3.9 👤 **Confirm email**: ON.
+- [x] 3.10 👤 **Secure email change**: ON.
+- [x] 3.11 👤 **Minimum password length**: `8`.
+- [x] 3.12 👤 **Email OTP Expiration**: `86400`. → **Save**.
 
 **3D. Address settings** (open https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/auth/url-configuration)
-- [ ] 3.13 👤 **Site URL**: `https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app` → **Save**.
-- [ ] 3.14 👤 Under **Redirect URLs**, the list must contain exactly these two (add what is missing with **Add URL**):
+- [x] 3.13 👤 **Site URL**: `https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app` → **Save**.
+- [x] 3.14 👤 Under **Redirect URLs**, the list must contain exactly these two (add what is missing with **Add URL**):
       `https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app/**` and `http://localhost:3000/**`.
-- [ ] 3.15 👤 Delete every other entry that has a `*` before `.vercel.app` (trash icon next to it).
+- [x] 3.15 👤 Delete every other entry that has a `*` before `.vercel.app` (trash icon next to it).
 
 **3E. The e-mail templates** (7 of them; each is copy, then paste)
-- [ ] 3.16 👤 Open https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/auth/templates
-- [ ] 3.17 👤 For each row below: open the GitHub link, click the **Copy raw file** button (two overlapping
+- [x] 3.16 👤 Open https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/auth/templates
+- [x] 3.17 👤 For each row below: open the GitHub link, click the **Copy raw file** button (two overlapping
       squares, top right of the file), go back to Supabase, click the template name, select everything in the
       **Body** box (Ctrl+A / ⌘+A), paste (Ctrl+V / ⌘+V), click **Save**.
 
