@@ -3,7 +3,9 @@
 **Status (2026-11-19): the domain is `fanfunnel.app`.** Done: 1 (bought through Vercel, auto-renew
 on), 2a (added, `www` redirects), 3 (`NEXT_PUBLIC_SITE_URL` set for Production; used from the next
 Production deploy), 6 (security file, contact address `support@fanfunnel.app`, docs). DMARC `p=none`
-is in Vercel DNS. Open: 2c on go-live day, 4, 5 (support@ forwarding first: it bounces until then), 7.
+is in Vercel DNS. Also done: 5 (ImprovMX forwards every address to the support Gmail; `fanfunnel.app` verified in Resend;
+Production `ALERT_EMAIL_FROM` = `FanFunnel <alerts@fanfunnel.app>`). Open: 2c on go-live day, 4, the Supabase
+SMTP sender (`account@fanfunnel.app`, OWNER_STEPS 11c), 7.
 
 Everything in the app takes its public address from one setting, `NEXT_PUBLIC_SITE_URL`.
 The sign-in e-mails take theirs from Supabase's **Site URL**. So a domain switch is settings,
@@ -44,8 +46,8 @@ The TEST project stays on the Preview address; nothing changes there.
   DNS records it lists (SPF, DKIM, and a DMARC record), wait for "Verified", then in Vercel set
   `ALERT_EMAIL_FROM` = `FanFunnel <alerts@yourdomain.com>` and redeploy, and in Supabase LIVE
   **SMTP Settings** change the sender address to `account@yourdomain.com`.
-- The support address is `support@fanfunnel.app` (Terms, Privacy, 404 and security pages). It needs
-  forwarding (e.g. ImprovMX, free) or a mailbox before go-live: until then mail to it bounces.
+- The support address is `support@fanfunnel.app` (Terms, Privacy, 404 and security pages). ImprovMX forwards
+  it (and every other address) to `fanfunnelsupport@gmail.com`, which replies as support@ through Resend.
 
 ## 6. Tell the agent the domain
 The agent then updates `public/.well-known/security.txt` (its Canonical and Policy lines must

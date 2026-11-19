@@ -114,13 +114,13 @@ at go-live and we will do it together step by step.
 "you're approved" e-mail, agency invitees get no invitation e-mail, and admins
 get no "new access request" e-mail (the app then stops promising those e-mails;
 the in-app bell still works). Account e-mail goes out as **"FanFunnel
-<account@easysimplesites.org>"** (the alert sender's domain; set
+<account@fanfunnel.app>"** (the domain of `ALERT_EMAIL_FROM`, set to `FanFunnel <alerts@fanfunnel.app>` for Production on 2026-11-19; set
 `ACCOUNT_EMAIL_FROM` only to use a different verified address). Error alerts and
 the new-request note go to `ALERT_EMAIL_TO`. On Preview the key is optional;
 add it there to test these e-mails against the TEST project.
 
 1. Go to **[resend.com → API Keys](https://resend.com/api-keys)** → **Create API Key** → name it
-   `fanfunnel-live` → permission **Sending access** → domain **easysimplesites.org** → create →
+   `fanfunnel-live` → permission **Sending access** → domain **fanfunnel.app** → create →
    copy it once.
 2. Add in Vercel:
 

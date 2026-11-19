@@ -2,6 +2,7 @@
 
 Tick each box as you go. "Me" = the agent does it; "You" = only you can (accounts, payments, legal).
 Never paste passwords or API keys into chat — put keys straight into the service that needs them.
+**Plain-language, click-by-click version of everything still open: `docs/handoff/GO_LIVE_SIMPLE.md`.**
 Once live, the daily / weekly / release routine is `docs/OWNER_CHECKLIST.md`; incidents are `docs/RUNBOOK.md`.
 
 **Order from here to the live site** (each stage below has the details and links):
@@ -42,7 +43,7 @@ Once live, the daily / weekly / release routine is `docs/OWNER_CHECKLIST.md`; in
       Test now: https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/auth/templates — Live at go-live: https://supabase.com/dashboard/project/ttlogfmogcccwiraaoae/auth/templates
       For each of **Confirm signup, Invite user, Magic link, Change email address, Reset password**: open the matching file in `supabase/templates/` (`confirmation.html`, `invite.html`, `magic_link.html`, `email_change.html`, `recovery.html`), copy the whole file, paste it over the template body, Save. Then, on the same page, turn **on** the two notices **Password changed** and **Email address changed** and paste `password_changed.html` / `email_address_changed.html`. Re-paste all of them after every batch that touches `supabase/templates/` (batch 7 did). Check on Test: request a reset on your laptop, open the link on your phone, tap **Continue** on the page that opens → it must reach the new-password page.
 - [ ] 11c. **Custom SMTP through Resend** (the built-in mailer sends at most 2 e-mails per hour for the whole project; past that, resets silently never arrive):
-      Test: https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/settings/auth → "SMTP Settings" → Enable Custom SMTP → Sender e-mail `account@easysimplesites.org`, Sender name `FanFunnel`, Host `smtp.resend.com`, Port `465`, Username `resend`, Password = a Resend API key with Sending access (create it at https://resend.com/api-keys, name `fanfunnel-supabase-test`; paste it only here). Live: same page under `ttlogfmogcccwiraaoae` with a second key named `fanfunnel-supabase-live`.
+      Test: https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/settings/auth → "SMTP Settings" → Enable Custom SMTP → Sender e-mail `account@fanfunnel.app`, Sender name `FanFunnel`, Host `smtp.resend.com`, Port `465`, Username `resend`, Password = a Resend API key with Sending access (create it at https://resend.com/api-keys, name `fanfunnel-supabase-test`, domain `fanfunnel.app`; paste it only here). Live: same page under `ttlogfmogcccwiraaoae` with a second key named `fanfunnel-supabase-live`.
 - [ ] 11d. **E-mail OTP expiry** (Authentication → Providers → Email → "Email OTP Expiration"): raise it from 3600 to `86400` seconds (24 h) in both projects, so an admin invitation opened after lunch still works. (If you prefer the stricter 1 hour, tell me and the RUNBOOK's "re-send an invitation" step stays the answer.)
 - [ ] 11e. **Secure email change** (Authentication → Providers → Email → "Secure email change"): keep it **ON** in both projects (the default). The app is written for ON: the old AND the new address each get a link, both must be opened, and the page says "step 1 of 2 done" after the first. With it OFF one link to the new address is enough, so someone at an unlocked laptop could move the account; if you still want OFF, tell me first so the Settings wording is changed to match.
 - [ ] 11f. **Minimum password length = 8** (Authentication → Providers → Email → "Minimum password length") in both projects. The app's own rule (8+, a letter and a digit) runs in the browser only; the project default of 6 would accept a weaker password sent straight to the sign-in API.
@@ -79,15 +80,15 @@ Once live, the daily / weekly / release routine is `docs/OWNER_CHECKLIST.md`; in
 - [ ] 16. **Supabase Pro** for the live project (~$25/mo — daily backups, no auto-pause):
       https://supabase.com/dashboard/org/gmsididujlbybxtzhgxl/billing → Upgrade.
       Optional add-on: Point-in-Time Recovery (undo to any minute).
-- [ ] 17. **Vercel Pro** (~$20/mo/member — Hobby is non-commercial only):
+- [x] 17. **Vercel Pro** — done (owner, 2026-11-19). (~$20/mo/member — Hobby is non-commercial only):
       https://vercel.com/easy-simple-sites → Settings → Billing → Upgrade to Pro.
-- [ ] 18. **support@fanfunnel.app inbox** (blocks go-live: it is the only contact on the Terms, Privacy, 404 and
-      security pages, and the domain has no mail records yet, so mail to it bounces) — free forwarding to Gmail
-      (e.g. https://improvmx.com), or Google Workspace (~$7/mo). (Me: add the DNS records once you pick.)
+- [x] 18. **support@fanfunnel.app inbox — done 2026-11-19:** ImprovMX (free) forwards every `@fanfunnel.app`
+      address to `fanfunnelsupport@gmail.com`; that Gmail sends as `support@fanfunnel.app` through Resend
+      (`fanfunnel.app` verified in Resend: DKIM, SPF and DMARC pass). Every message sent through Resend needs a subject.
 
 ## Stage 5 — Keys & alerts (after the monitoring feature lands)
 
-- [ ] 19. **Resend API key for error alerts** — https://resend.com/api-keys → Create → Permission "Sending access" → domain = your domain.
+- [ ] 19. **Resend API key for error alerts** — https://resend.com/api-keys → Create → Permission "Sending access" → domain `fanfunnel.app`.
       Paste it ONLY into Vercel: https://vercel.com/easy-simple-sites/fanfunnel/settings/environment-variables
       → `RESEND_API_KEY` (Production), and `ALERT_EMAIL_TO` = the address(es) that should get alerts.
 - [ ] 19a. **Live reward keys and cron secret** (missing from Production as of 2026-11-04, with `ADMIN_EMAILS`, `FF_REQUIRE_SUPABASE`, the VAPID trio and the alert pair; Preview already has the two reward keys).
@@ -270,7 +271,7 @@ Answer or do each of these before real fans arrive (ops audit, batch 6). Inciden
 - [ ] 32. **Supabase plan for LIVE:** which plan is it on? Is a daily backup listed under Database → Backups? Do you want Point-in-Time Recovery (PITR)? (Free has no self-serve restore and auto-pauses; see step 16.)
 - [ ] 33. **Upstash plan for Production:** which plan, and what monthly command allowance? (Estimate: one 30-minute event with 200 fans uses roughly 60–90k commands.) When it runs out, rate limits quietly become per-instance; System health shows the last fallback.
 - [ ] 34. **Resend plan and limits:** which plan, what daily/monthly send limit? One account carries alerts, creator account mail and Supabase Auth e-mail (password resets).
-- [ ] 35. **Support mailbox:** `fanfunnel.app` has no MX record yet, so mail to `support@fanfunnel.app` bounces. Which mailbox should it reach (forwarding or Workspace, step 18), and who watches it during events? Then send it a test e-mail (`docs/GO_LIVE.md` §9).
+- [x] 35. **Support mailbox:** done (step 18): `fanfunnelsupport@gmail.com`, test e-mails in and out worked 2026-11-19. Still to answer: who watches it during events?
 - [ ] 36. **Second admin:** who is it? Enrol them with their own two-factor before go-live, so one lost phone cannot lock everyone out (`docs/RUNBOOK.md`, "Creator locked out").
 - [ ] 37. **Vercel team members:** is the team just you? Fan links (`/spin/<token>`) appear in Vercel's request logs, so keep the team to people who may see them, and filter `/spin/*` before adding any log drain.
 - [ ] 38. **Ask the lawyer:** is a privacy contact that bounces acceptable for a soft launch (item 35)? Is deleting declined creator requests by hand every 90 days acceptable until it is automated (`docs/DATA_RETENTION.md`)?
