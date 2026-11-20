@@ -222,7 +222,7 @@ LIVE project = `ttlogfmogcccwiraaoae`. Same clicks as Part 3, with these differe
 
 ## Part 6: Vercel settings
 
-- [ ] 6.1 🤖 Say **"do the Vercel settings"**. I check and fix: Node.js version 22, Fluid compute on, Git fork
+- [x] 6.1 🤖 Say **"do the Vercel settings"**. I check and fix: Node.js version 22, Fluid compute on, Git fork
       protection on, the Vercel Toolbar off on Previews. I report back what I changed.
 - [ ] 6.2 👤 Separate rate-limit store for the Preview (10 minutes):
   - Open https://vercel.com/easy-simple-sites/~/stores → **Create Database** → **Upstash** (Redis) → **Continue**.
