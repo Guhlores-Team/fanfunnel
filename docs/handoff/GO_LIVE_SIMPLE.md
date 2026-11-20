@@ -142,8 +142,9 @@ LIVE project = `ttlogfmogcccwiraaoae`. Same clicks as Part 3, with these differe
 
 **5A. Security switches**
 - [ ] 5.1 👤 Open https://github.com/Guhlores-Team/fanfunnel/settings/security_analysis
-- [ ] 5.2 👤 Click **Enable** next to each: **Private vulnerability reporting**, **Dependabot alerts**,
-      **Dependabot security updates**, **Secret scanning**, **Push protection**.
+- [ ] 5.2 👤 Turn on: **Private vulnerability reporting**, **Dependabot alerts**, **Dependabot security updates**,
+      **Malware alerts** (skip it if it asks for payment). Secret scanning and Push protection are paid extras on a
+      private repository ("Secret Protection"): **skip them, buy nothing.**
 
 **5B. Gather the values you will need** (put each one in your password manager note "FanFunnel GitHub")
 - [ ] 5.3 👤 **New Supabase access token:** https://supabase.com/dashboard/account/tokens → **Generate new token**
