@@ -189,7 +189,9 @@ jobs:
         # types (Args: Record<PropertyKey, never>, NonNullable<Json>,
         # ComputedFields), so it can never match the committed file. The
         # DB-URL path reads them with SUPABASE_TEST_ACCESS_TOKEN, a token
-        # scoped to the TEST project only, never the account token.
+        # scoped to the TEST project only, never the account token, through
+        # scripts/ci/hosted-types.mjs (the Management API endpoint the CLI
+        # uses; CLI 2.122.1 refuses the project-scoped token format).
         shell: bash
         env:
           MODE: ${{ steps.target.outputs.mode }}
@@ -202,11 +204,7 @@ jobs:
           test "$TEST_PROJECT_REF" = "snmcrmhgevfqggxdiomu"
           generated="$RUNNER_TEMP/db.types.ts"
           if [ "$MODE" = "db-url" ]; then
-            if [ -z "$TEST_TYPES_TOKEN" ]; then
-              echo "::error title=TEST types token missing::Add SUPABASE_TEST_ACCESS_TOKEN (a Supabase access token scoped to the TEST project only) to the 'test' environment (docs/GO_LIVE.md, SUP-1)."
-              exit 1
-            fi
-            SUPABASE_ACCESS_TOKEN="$TEST_TYPES_TOKEN" supabase gen types typescript --project-id "$TEST_PROJECT_REF" > "$generated"
+            node scripts/ci/hosted-types.mjs > "$generated"
           else
             supabase gen types typescript --project-id "$TEST_PROJECT_REF" > "$generated"
           fi

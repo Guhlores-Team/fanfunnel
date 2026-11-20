@@ -66,6 +66,7 @@ jobs:
           node scripts/test/workflow-supply-chain.test.mjs
           node scripts/test/migration-test-gate.test.mjs
           node scripts/test/prod-backup-gate.test.mjs
+          node scripts/test/hosted-types.test.mjs
           node scripts/test/env-inventory.test.mjs
           node scripts/golive/carry-over.test.mjs
           node scripts/ops/test-maintenance.test.mjs

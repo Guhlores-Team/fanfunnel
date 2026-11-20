@@ -119,10 +119,10 @@ check("PR job never names the account token any other way", (testJob.match(/secr
 const choose = testSteps.find((s) => s.includes("id: target")) ?? "";
 check("credential choice validates the TEST DB URL before using it", choose.includes("node scripts/ci/supabase-test-db-url.mjs") && choose.includes('echo "mode=db-url"') && choose.includes("set -euo pipefail"));
 check("DB-URL path: push and read-back use --db-url", ["supabase db push --db-url \"$TEST_DB_URL\"", "supabase migration list --db-url \"$TEST_DB_URL\""].every((c) => testJob.includes(c)));
-const typesStep = testSteps.find((s) => s.includes("supabase gen types typescript")) ?? "";
+const typesStep = testSteps.find((s) => s.includes("db.types.ts")) ?? "";
 check("DB-URL path: types come from the hosted generator with the TEST-scoped token only", !code(typesStep).includes("--db-url") &&
   typesStep.includes("TEST_TYPES_TOKEN: ${{ steps.target.outputs.mode == 'db-url' && secrets.SUPABASE_TEST_ACCESS_TOKEN || '' }}") &&
-  typesStep.includes('SUPABASE_ACCESS_TOKEN="$TEST_TYPES_TOKEN" supabase gen types typescript --project-id "$TEST_PROJECT_REF"') &&
+  typesStep.includes('node scripts/ci/hosted-types.mjs > "$generated"') &&
   typesStep.includes('test "$TEST_PROJECT_REF" = "snmcrmhgevfqggxdiomu"'));
 check("the TEST-scoped token is used only by the PR job's types step", Object.entries(workflows).every(([n, t]) => (t.match(/secrets\.SUPABASE_TEST_ACCESS_TOKEN/g) ?? []).length === (n === "supabase-migrations.yml" ? 1 : 0)) && !prodJob.includes("SUPABASE_TEST_ACCESS_TOKEN"));
 check("PR job serializes TEST runs across PRs without cancelling one in flight", /\n {4}concurrency:\n {6}group: supabase-migrate-test\n {6}cancel-in-progress: false\n/.test(header(testJob)));
