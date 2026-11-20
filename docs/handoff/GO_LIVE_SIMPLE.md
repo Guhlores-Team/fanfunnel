@@ -183,7 +183,7 @@ LIVE project = `ttlogfmogcccwiraaoae`. Same clicks as Part 3, with these differe
 | `SUPABASE_PROD_DB_PASSWORD` | the live password (5.6) |
 | `SUPABASE_ACCESS_TOKEN` | the token from 5.3 |
 
-- [ ] 5.12 👤 Open https://github.com/Guhlores-Team/fanfunnel/settings/secrets/actions . Under **Repository
+- [x] 5.12 👤 Open https://github.com/Guhlores-Team/fanfunnel/settings/secrets/actions . Under **Repository
       secrets**, delete (trash icon) only these if they are there: `SUPABASE_PROD_DB_PASSWORD`,
       `SUPABASE_PROD_PROJECT_REF`, `SUPABASE_ACCESS_TOKEN`, `VERCEL_TOKEN`, `FANFUNNEL_TEST_CRON_SECRET`.
       **Keep** `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` and
