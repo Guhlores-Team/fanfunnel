@@ -14,7 +14,7 @@ One box at a time, top to bottom. Each step is one click or one thing to type.
 ## ✅ Already done
 
 **Progress (2026-11-20):** Parts 2–7 done except 2.9, 3.18 and 4.4 (wait for Supabase Pro), 4.6 (go-live day), 5.23–5.24, 6.2 (skipped) and 7.13 (go-live day).
-**Pick up at 5.23, then Part 8.**
+**Pick up at Part 8 (5.24 is checked by me with CI).**
 
 
 - ✅ Domain `fanfunnel.app` bought (auto-renews), connected, padlock on, `www` goes to it.
@@ -215,7 +215,7 @@ LIVE project = `ttlogfmogcccwiraaoae`. Same clicks as Part 3, with these differe
 - [x] 5.21 👤 **Fork pull request workflows**: **Require approval for all external contributors**.
 - [x] 5.22 👤 **Workflow permissions**: **Read repository contents and packages permissions**. Untick
       **Allow GitHub Actions to create and approve pull requests**. → **Save**.
-- [ ] 5.23 🤖 Old pull request #42 is unsafe to keep around. Say **"close PR 42"** and I close it and delete its branch.
+- [x] 5.23 🤖 Old pull request #42 closed (2026-11-20). 👤 Its branch: open https://github.com/Guhlores-Team/fanfunnel/pull/42 and click **Delete branch** at the bottom.
 - [ ] 5.24 👤 Tell me "GitHub done". I check that the automatic checks still pass with the new settings.
 
 ---
