@@ -141,8 +141,8 @@ LIVE project = `ttlogfmogcccwiraaoae`. Same clicks as Part 3, with these differe
 ## Part 5: GitHub settings (30 minutes)
 
 **5A. Security switches**
-- [ ] 5.1 👤 Open https://github.com/Guhlores-Team/fanfunnel/settings/security_analysis
-- [ ] 5.2 👤 Turn on: **Private vulnerability reporting**, **Dependabot alerts**, **Dependabot security updates**,
+- [x] 5.1 👤 Open https://github.com/Guhlores-Team/fanfunnel/settings/security_analysis
+- [x] 5.2 👤 Turn on: **Private vulnerability reporting**, **Dependabot alerts**, **Dependabot security updates**,
       **Malware alerts** (skip it if it asks for payment). Secret scanning and Push protection are paid extras on a
       private repository ("Secret Protection"): **skip them, buy nothing.**
 
