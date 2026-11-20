@@ -13,8 +13,8 @@ One box at a time, top to bottom. Each step is one click or one thing to type.
 
 ## ✅ Already done
 
-**Progress (2026-11-20):** Part 2 done except 2.9; Parts 3 and 4 done except 3.18 and 4.4 (wait for Supabase Pro) and 4.6 (go-live day).
-**Pick up at Part 5.**
+**Progress (2026-11-20):** Parts 2–7 done except 2.9, 3.18 and 4.4 (wait for Supabase Pro), 4.6 (go-live day), 5.23–5.24, 6.2 (skipped) and 7.13 (go-live day).
+**Pick up at 5.23, then Part 8.**
 
 
 - ✅ Domain `fanfunnel.app` bought (auto-renews), connected, padlock on, `www` goes to it.
@@ -243,28 +243,28 @@ For each key: **Add New** (or **Add Environment Variable**) → **Key** = the na
 Environments: tick **Production** only → if the table says *Sensitive: yes*, switch **Sensitive** on → **Save**.
 
 **7A. Open the Terminal** (it makes random secret keys on your own computer)
-- [ ] 7.1 👤 Mac: press ⌘ + Space, type `Terminal`, press Enter. Windows: Start, type `PowerShell`, Enter.
-- [ ] 7.2 👤 Create a password-manager note **"FanFunnel LIVE keys"**. Everything below goes there first, then Vercel.
+- [x] 7.1 👤 Mac: press ⌘ + Space, type `Terminal`, press Enter. Windows: Start, type `PowerShell`, Enter.
+- [x] 7.2 👤 Create a password-manager note **"FanFunnel LIVE keys"**. Everything below goes there first, then Vercel.
 
 **7B. The two reward keys (MOST IMPORTANT: back them up; if lost, unclaimed reward codes are gone forever)**
-- [ ] 7.3 👤 Paste this into the Terminal and press Enter:
+- [x] 7.3 👤 Paste this into the Terminal and press Enter:
       Mac: `openssl rand -base64 32`
       Windows: `$b=New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)`
-- [ ] 7.4 👤 It prints one line ending in `=`. Copy it into your note as **REWARD_ENCRYPTION_KEY**.
-- [ ] 7.5 👤 Press the up-arrow key, then Enter (same command again). Copy the new, different line into the note as
+- [x] 7.4 👤 It prints one line ending in `=`. Copy it into your note as **REWARD_ENCRYPTION_KEY**.
+- [x] 7.5 👤 Press the up-arrow key, then Enter (same command again). Copy the new, different line into the note as
       **REWARD_CODE_FINGERPRINT_KEY**.
-- [ ] 7.6 👤 Add both in Vercel (Production, **Sensitive ON**).
+- [x] 7.6 👤 Add both in Vercel (Production, **Sensitive ON**).
 
 **7C. The nightly-job secret**
-- [ ] 7.7 👤 Terminal: Mac `openssl rand -hex 32` · Windows
+- [x] 7.7 👤 Terminal: Mac `openssl rand -hex 32` · Windows
       `$b=New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); -join ($b|%{$_.ToString('x2')})`
-- [ ] 7.8 👤 Save it in the note as **CRON_SECRET**, then add it in Vercel (Production, **Sensitive ON**).
+- [x] 7.8 👤 Save it in the note as **CRON_SECRET**, then add it in Vercel (Production, **Sensitive ON**).
 
 **7D. Phone notification keys**
-- [ ] 7.9 👤 Terminal: `npx web-push generate-vapid-keys` → if it asks "Ok to proceed?", type `y` and Enter.
+- [x] 7.9 👤 Terminal: `npx web-push generate-vapid-keys` → if it asks "Ok to proceed?", type `y` and Enter.
       If it says `command not found`: install Node from https://nodejs.org (big green **LTS** button, open the
       download, click through), close and reopen the Terminal, try again.
-- [ ] 7.10 👤 It prints a **Public Key** and a **Private Key**. Save both in the note. Add in Vercel:
+- [x] 7.10 👤 It prints a **Public Key** and a **Private Key**. Save both in the note. Add in Vercel:
 
 | Name | Value | Sensitive |
 |---|---|---|
@@ -273,9 +273,9 @@ Environments: tick **Production** only → if the table says *Sensitive: yes*, s
 | `VAPID_SUBJECT` | `mailto:support@fanfunnel.app` | no |
 
 **7E. E-mail key and where alerts go**
-- [ ] 7.11 👤 https://resend.com/api-keys → **Create API key** → name `fanfunnel-live` → **Sending access** →
+- [x] 7.11 👤 https://resend.com/api-keys → **Create API key** → name `fanfunnel-live` → **Sending access** →
       domain **fanfunnel.app** → **Add** → copy.
-- [ ] 7.12 👤 Add in Vercel:
+- [x] 7.12 👤 Add in Vercel:
 
 | Name | Value | Sensitive |
 |---|---|---|
@@ -283,13 +283,13 @@ Environments: tick **Production** only → if the table says *Sensitive: yes*, s
 | `ALERT_EMAIL_TO` | `fanfunnelsupport@gmail.com` | no |
 
 **7F. "Is the site up?" alarms** (both free; sign up with fanfunnelsupport@gmail.com)
-- [ ] 7.13 👤 https://uptimerobot.com → sign up → **New monitor** → type **HTTP(s)** → URL
+- [ ] 7.13 👤 **(go-live day: needs /api/health live first)** https://uptimerobot.com → sign up → **New monitor** → type **HTTP(s)** → URL
       `https://fanfunnel.app/api/health` → interval 5 minutes (60 seconds if offered) → alert contact = your
       e-mail → **Create**.
-- [ ] 7.14 👤 https://healthchecks.io → sign up → **Add Check** → name `fanfunnel-nightly` → Period **1 day**,
+- [x] 7.14 👤 https://healthchecks.io → sign up → **Add Check** → name `fanfunnel-nightly` → Period **1 day**,
       Grace **6 hours** → **Save** → copy its **ping URL** (starts with `https://hc-ping.com/`).
-- [ ] 7.15 👤 Add in Vercel: `HEARTBEAT_URL` = that ping URL (Production, **Sensitive ON**).
-- [ ] 7.16 👤 Tell me **"keys are in"** (no values!). I check the list of names and that nothing is missing.
+- [x] 7.15 👤 Add in Vercel: `HEARTBEAT_URL` = that ping URL (Production, **Sensitive ON**).
+- [x] 7.16 👤 Tell me **"keys are in"** (no values!). I check the list of names and that nothing is missing.
       (The keys only switch on at the go-live update, so nothing changes on the live site yet.)
 
 ---
