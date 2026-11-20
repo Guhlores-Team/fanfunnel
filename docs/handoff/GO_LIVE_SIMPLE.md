@@ -224,7 +224,8 @@ LIVE project = `ttlogfmogcccwiraaoae`. Same clicks as Part 3, with these differe
 
 - [x] 6.1 🤖 Say **"do the Vercel settings"**. I check and fix: Node.js version 22, Fluid compute on, Git fork
       protection on, the Vercel Toolbar off on Previews. I report back what I changed.
-- [ ] 6.2 👤 Separate rate-limit store for the Preview (10 minutes):
+- [x] 6.2 Skipped (2026-11-20): a second Upstash store is paid-only on this account, and rate-limit keys are
+      already split by environment (`rl:preview:` / `rl:production:`, `src/lib/rateLimit.ts`). Original steps, for later:
   - Open https://vercel.com/easy-simple-sites/~/stores → **Create Database** → **Upstash** (Redis) → **Continue**.
   - Name `fanfunnel-preview`, free plan → **Create**.
   - **Connect Project** → `fanfunnel` → tick **Preview** only (untick Production and Development) → **Connect**.
