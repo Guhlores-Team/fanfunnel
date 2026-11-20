@@ -14,7 +14,7 @@ One box at a time, top to bottom. Each step is one click or one thing to type.
 ## ✅ Already done
 
 **Progress (2026-11-20):** Parts 2–7 done except 2.9, 3.18 and 4.4 (wait for Supabase Pro), 4.6 (go-live day), 5.23–5.24, 6.2 (skipped) and 7.13 (go-live day).
-**Pick up at Part 8 (5.24 is checked by me with CI).**
+**Pick up at Part 8 (owner tests at home). Part 10 answered.**
 
 
 - ✅ Domain `fanfunnel.app` bought (auto-renews), connected, padlock on, `www` goes to it.
@@ -316,15 +316,16 @@ Environments: tick **Production** only → if the table says *Sensitive: yes*, s
 
 ---
 
-## Part 10: Quick answers I need from you (reply in one message, any time)
+## Part 10: Quick answers (answered 2026-11-20)
 
-1. Upstash: which plan is the live store on? (https://console.upstash.com → the database → **Plan**)
-2. Resend: free plan (100 e-mails/day) or paid? Free is fine at launch; upgrade if you expect big events.
-3. Second admin: is it ashandlynx@gmail.com? They need their own account with two-factor before go-live.
-4. Vercel team: is it just you? (Fan links appear in Vercel's logs, so keep the team small.)
-5. GitHub: keep the code public, or make it private?
-6. Sign-in links: valid for 24 hours (recommended, set in 3.12) or 1 hour?
-7. Who presses Merge on go-live day? (Should be you.)
+1. Upstash: free plan (owner believes). Fine at launch; rate-limit keys are split per environment.
+2. Resend: free plan (100 e-mails/day). Upgrade before a big event.
+3. Second admin: ashandlynx@gmail.com. Before go-live: two-factor on their Gmail (2.9), and the address is in
+   Production `ADMIN_EMAILS` (owner confirms). After go-live they sign up on fanfunnel.app and claim admin.
+4. Vercel team: just the owner.
+5. GitHub: the code stays private (it already is).
+6. Sign-in links: 24 hours (already set in 3.12 / 4.3).
+7. The owner presses Merge on go-live day.
 
 ---
 
