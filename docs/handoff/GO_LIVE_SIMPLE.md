@@ -147,17 +147,18 @@ LIVE project = `ttlogfmogcccwiraaoae`. Same clicks as Part 3, with these differe
       private repository ("Secret Protection"): **skip them, buy nothing.**
 
 **5B. Gather the values you will need** (put each one in your password manager note "FanFunnel GitHub")
-- [ ] 5.3 👤 **New Supabase access token:** https://supabase.com/dashboard/account/tokens → **Generate new token**
-      → name `github-ci` → copy it into the note. **Don't revoke the older token yet:** the automatic tests still
+- [x] 5.3 👤 **New Supabase access token:** https://supabase.com/dashboard/account/tokens → **Generate new token**
+      → name `github-ci-live`, **Project** access to only `fanfunnel` (LIVE), preset **Full access**, expires Never
+      → copy it into the note. **Don't revoke the older token yet:** the automatic tests still
       use it until step 5.7 is done. You revoke it in step 5.12.
-- [ ] 5.4 👤 **TEST database password:** if you don't have it saved, open
+- [x] 5.4 👤 **TEST database password:** if you don't have it saved, open
       https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/settings/database → **Reset database password**
       → **Generate a password** → copy it → **Reset password**. (Resetting TEST is safe.)
-- [ ] 5.5 👤 **TEST connection string:** open https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu?showConnect=true
+- [x] 5.5 👤 **TEST connection string:** open https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu?showConnect=true
       → **Session pooler** → copy the line that starts with `postgresql://` → in your note, replace
       `[YOUR-PASSWORD]` (brackets too) with the password from 5.4.
-- [ ] 5.6 👤 **LIVE database password:** you need it, but **do not reset it** without asking me first. If you
-      don't have it saved, tell me "I don't have the live DB password" and we plan the reset together.
+- [x] 5.6 👤 **LIVE database password:** reset at https://supabase.com/dashboard/project/ttlogfmogcccwiraaoae/database/settings
+      and saved (the site never uses it; only the GitHub `production` job does).
 
 **5C. Environments** (open https://github.com/Guhlores-Team/fanfunnel/settings/environments)
 - [ ] 5.7 👤 Click **test** (or **New environment** → name `test` → **Configure**). Under **Environment secrets**
@@ -186,7 +187,7 @@ LIVE project = `ttlogfmogcccwiraaoae`. Same clicks as Part 3, with these differe
       `SUPABASE_PROD_PROJECT_REF`, `SUPABASE_ACCESS_TOKEN`, `VERCEL_TOKEN`, `FANFUNNEL_TEST_CRON_SECRET`.
       **Keep** `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` and
       anything starting with `SUPABASE_TEST_`. Then, at https://supabase.com/dashboard/account/tokens , click
-      **Revoke** on every token except `github-ci`.
+      **Delete** every token except `github-ci-live`.
 
 **5D. Dependabot needs the TEST trio too**
 - [ ] 5.13 👤 Open https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/settings/api-keys and keep it open.
