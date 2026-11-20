@@ -13,8 +13,8 @@ One box at a time, top to bottom. Each step is one click or one thing to type.
 
 ## ✅ Already done
 
-**Progress (2026-11-19):** Part 2 done except 2.9; Part 3 done except 3.18 (waits for Supabase Pro).
-**Pick up at Part 4.**
+**Progress (2026-11-20):** Part 2 done except 2.9; Parts 3 and 4 done except 3.18 and 4.4 (wait for Supabase Pro) and 4.6 (go-live day).
+**Pick up at Part 5.**
 
 
 - ✅ Domain `fanfunnel.app` bought (auto-renews), connected, padlock on, `www` goes to it.
@@ -125,12 +125,12 @@ click **Email**)
 
 LIVE project = `ttlogfmogcccwiraaoae`. Same clicks as Part 3, with these differences only.
 
-- [ ] 4.1 👤 New Resend key exactly like 3.1–3.3, but named `fanfunnel-supabase-live`.
-- [ ] 4.2 👤 SMTP like 3.4–3.8 at https://supabase.com/dashboard/project/ttlogfmogcccwiraaoae/auth/smtp
+- [x] 4.1 👤 New Resend key exactly like 3.1–3.3, but named `fanfunnel-supabase-live`.
+- [x] 4.2 👤 SMTP like 3.4–3.8 at https://supabase.com/dashboard/project/ttlogfmogcccwiraaoae/auth/smtp
       (paste the **live** key from 4.1).
-- [ ] 4.3 👤 Sign-in rules like 3.9–3.12 at https://supabase.com/dashboard/project/ttlogfmogcccwiraaoae/auth/providers
+- [x] 4.3 👤 Sign-in rules like 3.9–3.12 at https://supabase.com/dashboard/project/ttlogfmogcccwiraaoae/auth/providers
 - [ ] 4.4 👤 Leaked passwords like 3.18 at https://supabase.com/dashboard/project/ttlogfmogcccwiraaoae/auth/protection
-- [ ] 4.5 👤 Addresses at https://supabase.com/dashboard/project/ttlogfmogcccwiraaoae/auth/url-configuration :
+- [x] 4.5 👤 Addresses at https://supabase.com/dashboard/project/ttlogfmogcccwiraaoae/auth/url-configuration :
       **Site URL** `https://fanfunnel.app`. **Redirect URLs**: add `https://fanfunnel.app/**`, keep
       `https://fanfunnel.vercel.app/**`, delete anything with a `*` before `.vercel.app`.
 - [ ] 4.6 **Do NOT paste the templates on LIVE yet.** We do that together on go-live day (Part 11), because
