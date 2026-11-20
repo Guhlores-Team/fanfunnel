@@ -56,6 +56,12 @@ real data.
 3. Only after it's verified on Preview **and** CI is green
    (`verify` / `supabase` / `login-ui`) → merge to `main` → prod deploys.
 
+`dashboard-redesign` uses the stricter gate in `docs/PREVIEW_DEPLOY.md`: its
+automatic Git deployment is disabled. After TEST migrations/type verification
+and all required CI jobs succeed, deploy an archive of that exact checked SHA
+with the authenticated CLI, explicitly targeting Preview. This ensures DB before
+code. It does not authorize a Production deployment or a merge to `main`.
+
 **Rules the agent MUST follow:**
 - **Never merge to `main`** without (a) all CI checks green AND (b) explicit user
   confirmation the change was tested on its Preview. CI passing is necessary but
@@ -66,3 +72,43 @@ real data.
 - **DB before code:** a migration must reach the target database BEFORE the code
   that needs it goes live — apply to **test** before previewing, to **prod**
   before (or exactly at) the merge to `main`.
+
+# Current hand-off
+
+Work in progress, branch states, merge order and owner context are in
+`docs/handoff/HANDOFF.md`. Read it before starting any task.
+
+
+# Permanent game and economy guardrails (non-negotiable)
+
+These rules apply to Wheel, Scratch ticket, Bingo and every future game. See
+`docs/handoff/PROPOSALS.md` §8 and the current numbered implementation in HANDOFF.
+
+1. **Every credited primary play wins its drawn prize.** Refused or unresolved
+   requests must not be presented as completed plays. Admission, credit debit,
+   primary prize, stock/reward allocation, seed/nonce, focus/pity progression and
+   game state must remain atomic; retries reconcile the same operation.
+2. **No shared pots or cross-fan game state.** Bingo cards and progress belong to
+   the token-bound fan; another fan's play cannot contribute to or take a reward.
+3. **No engineered near-misses.** Do not alter the draw, ticket, card, odds or
+   reveal to fabricate an almost-win or encourage another purchase. Presentation
+   must show the committed outcome, including an accessible Reveal all action.
+4. **Exact fairness replay is required.** Preserve historical wheel verification.
+   New game proofs must reproduce the committed pool/settings, primary result,
+   complete ticket/card transition, recorded redraws and ordered bonus awards.
+   A matching seed hash alone does not establish successful game replay.
+5. **Bonuses are rewards, not new paid plays.** A Bingo line bonus uses no extra
+   credit, seed rotation, focus/pity/referral progression or engagement play count.
+   Include its prize cost and fulfilment in reward/financial reporting.
+6. **Keep the engagement gate and rollout gates.** Fresh plays and engagement
+   respect `fanEngagementAllowed`; safe reconciliation/private-history reads must
+   not mint a fresh play. Hosted Chase stays OFF until verified Focus soak and an
+   explicitly approved single-creator TEST allowlist. No broad enablement by default.
+7. **Document stock failures accurately.** The current engine uses a replayable
+   redraw from the committed pool for recoverable `sold_out` candidates. An
+   unrecoverable held-stock/key failure refuses before debit. The older §8
+   manual-pending fallback is a proposal variation, not implemented behavior;
+   never claim that a refused play created a manual redemption.
+
+These guardrails add to, and never relax, the auth, RLS, negative-test,
+TEST-before-Preview, exact-SHA verification and no-main/Production rules above.

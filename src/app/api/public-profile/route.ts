@@ -1,19 +1,23 @@
 import { NextResponse } from "next/server";
-import { getMyPublicProfile, setMyPublicProfile } from "@/lib/data";
+import { revalidatePath } from "next/cache";
+import { getMyPublicProfile, normalizePublicSlug, setMyPublicProfile } from "@/lib/data";
+import { MAX_DELIVERY_DAYS } from "@/lib/deliveryDays";
 import { supabaseUrl } from "@/lib/supabase/url";
 import { externalUrl } from "@/lib/format";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { limitRoute } from "@/lib/api/limit";
+import { isReservedName } from "@/lib/reservedNames";
+import { publicTextCheck } from "@/lib/publicText";
+import { MAX_SLUG_LEN, SLUG_INPUT_RE } from "@/lib/data/publicSlug";
 
 // Field limits and slug shape enforced before persistence. The slug is further
 // normalized in the data layer, so we only need to reject oversized/illegal
 // raw input here. The tip URL is validated against its normalized form (see
 // `externalUrl`) so bare domains stay valid while non-HTTP(S) schemes such as
 // `mailto:`, `tel:`, or `javascript:` are rejected.
-const MAX_SLUG_LEN = 64;
 const MAX_TAGLINE_LEN = 200;
 const MAX_NOTE_LEN = 2000;
 const MAX_TIP_URL_LEN = 2048;
-const SLUG_RE = /^[A-Za-z0-9 _-]*$/;
 
 function isValidTipUrl(raw: string): boolean {
   if (raw === "") return true;
@@ -28,7 +32,9 @@ function isValidTipUrl(raw: string): boolean {
 }
 
 // The signed-in creator's link-in-bio settings.
-export async function GET() {
+export async function GET(req: Request) {
+  const rateLimited = await limitRoute(req, "public-profile:GET");
+  if (rateLimited) return rateLimited;
   const profile = await getMyPublicProfile();
   return NextResponse.json(profile);
 }
@@ -60,14 +66,21 @@ function isTrustedAvatarUrl(url: string): boolean {
 }
 
 export async function PUT(req: Request) {
+  const rateLimited = await limitRoute(req, "public-profile:PUT");
+  if (rateLimited) return rateLimited;
   const body = await parseJsonBody<{
     slug?: string;
     tipUrl?: string;
     tagline?: string;
     note?: string;
     avatarUrl?: string;
+    deliveryDays?: unknown;
   }>(req);
   if (body === BAD_REQUEST) return badRequest();
+  // PR-10: a whole number of days (1..60) or null for no promise.
+  if (body.deliveryDays !== undefined && body.deliveryDays !== null && (!Number.isInteger(body.deliveryDays) || (body.deliveryDays as number) < 1 || (body.deliveryDays as number) > MAX_DELIVERY_DAYS)) {
+    return NextResponse.json({ error: "invalid_delivery_days" }, { status: 400 });
+  }
   if (body.avatarUrl !== undefined && !isTrustedAvatarUrl(body.avatarUrl)) {
     return NextResponse.json({ error: "invalid_avatar_url" }, { status: 400 });
   }
@@ -75,9 +88,13 @@ export async function PUT(req: Request) {
     body.slug !== undefined &&
     (typeof body.slug !== "string" ||
       body.slug.length > MAX_SLUG_LEN ||
-      !SLUG_RE.test(body.slug))
+      !SLUG_INPUT_RE.test(body.slug))
   ) {
     return NextResponse.json({ error: "invalid_slug" }, { status: 400 });
+  }
+  // TS-03: /c/admin, /c/fanfunnel-support and look-alikes are nobody's page.
+  if (body.slug !== undefined && isReservedName(body.slug)) {
+    return NextResponse.json({ error: "slug_reserved" }, { status: 400 });
   }
   if (
     body.tipUrl !== undefined &&
@@ -97,6 +114,23 @@ export async function PUT(req: Request) {
   ) {
     return NextResponse.json({ error: "invalid_note" }, { status: 400 });
   }
+  // TS-04: no links, e-mail addresses, phone numbers, other-app handles or
+  // slurs in text every visitor to /c/<slug> and the spin page reads.
+  for (const [value, field] of [[body.tagline, "tagline"], [body.note, "creatorNote"]] as const) {
+    if (value === undefined) continue;
+    const text = publicTextCheck(value, { field });
+    if (!text.ok) return badRequest(text.code);
+  }
+  // /c/<slug> is ISR (revalidate 60). Fields it renders mark the old and new
+  // slug's cached page stale, so a rename or bio edit shows on the next visit
+  // instead of up to a minute later (and the old slug stops serving the page).
+  const touchesPublicPage =
+    body.slug !== undefined ||
+    body.tipUrl !== undefined ||
+    body.tagline !== undefined ||
+    body.avatarUrl !== undefined;
+  const oldSlug = touchesPublicPage ? (await getMyPublicProfile()).slug : null;
+
   // Pass only the fields present in the request; the data layer (migration 0033)
   // updates exactly those atomically and leaves omitted fields unchanged — no
   // read-modify-write, so concurrent partial updates can't clobber each other.
@@ -106,7 +140,14 @@ export async function PUT(req: Request) {
     ...(body.tagline !== undefined ? { tagline: body.tagline } : {}),
     ...(body.note !== undefined ? { note: body.note } : {}),
     ...(body.avatarUrl !== undefined ? { avatarUrl: body.avatarUrl } : {}),
+    ...(body.deliveryDays !== undefined ? { deliveryDays: body.deliveryDays as number | null } : {}),
   });
   if ("error" in result) return errorResponse(result.error);
+  if (touchesPublicPage) {
+    const newSlug = body.slug !== undefined ? normalizePublicSlug(body.slug) : oldSlug;
+    for (const s of new Set([oldSlug, newSlug])) {
+      if (s) revalidatePath(`/c/${s}`);
+    }
+  }
   return NextResponse.json(result);
 }

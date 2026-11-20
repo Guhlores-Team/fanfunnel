@@ -2,6 +2,7 @@
 
 import { Component, type ReactNode } from "react";
 import { isDebugActive, reportError } from "./debug";
+import { reportClientError } from "@/lib/monitoring/client";
 
 interface Props {
   children: ReactNode;
@@ -27,6 +28,10 @@ export default class DebugErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: { componentStack?: string | null }) {
+    // Only reached when the fallback below rendered (debug mode); otherwise the
+    // error propagates to error.tsx, which reports it. Monitoring runs on
+    // every environment, the console capture only in debug mode.
+    reportClientError({ message: error?.message || String(error), stack: error?.stack, kind: "react" });
     if (!isDebugActive()) return;
     reportError({
       kind: "react",

@@ -1,7 +1,9 @@
+import "server-only";
 import { createServerClient } from "@supabase/ssr";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { supabaseUrl } from "./url";
+import { serverRequestProtocol, sessionCookieOptions } from "./cookies";
 
 /**
  * The three env vars the real (non-mock) Supabase path needs. The service-role
@@ -58,11 +60,17 @@ export function isSupabaseConfigured(): boolean {
  * Use in Server Components, Route Handlers, and Server Actions.
  */
 export async function createClient() {
-  const cookieStore = await cookies();
+  const [cookieStore, headerStore] = await Promise.all([cookies(), headers()]);
   return createServerClient(
     supabaseUrl(),
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      // Secure only on https: x-forwarded-proto (what Vercel sends), else the
+      // scheme of NEXT_PUBLIC_SITE_URL for self-hosted deploys whose proxy strips
+      // the header. See cookies.ts for why the cookie is not httpOnly.
+      cookieOptions: sessionCookieOptions(
+        serverRequestProtocol(headerStore.get("x-forwarded-proto"))
+      ),
       cookies: {
         getAll() {
           return cookieStore.getAll();
@@ -87,10 +95,35 @@ export async function createClient() {
  * ONLY use server-side for trusted operations like recording a spin where we
  * must atomically decrement spins and stock regardless of the caller.
  */
-export function createServiceClient() {
-  return createSupabaseClient(
+export function createServiceClient(options: { timeoutMs?: number } = {}) {
+  const { timeoutMs } = options;
+  const client = createSupabaseClient(
     supabaseUrl(),
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } }
+    {
+      auth: { persistSession: false },
+      // OPS3-02: a per-call deadline for the fan path, so a slow database makes
+      // a fan page fail fast (the "nothing was spent" page) instead of hanging
+      // until the platform's own timeout. Every query and RPC made through
+      // this client aborts after timeoutMs; the caller maps the error.
+      ...(timeoutMs ? { db: { timeout: timeoutMs } } : {}),
+    }
   );
+  if (timeoutMs) disableReadRetries(client);
+  return client;
 }
+
+/**
+ * OPS3-02: postgrest-js retries idempotent reads up to three times with a
+ * 1/2/4 s backoff on a network error or a 503/520, and counts a per-attempt
+ * timeout as a network error, so a 4 s deadline was really 4×4+7 = 23 s
+ * (measured against a hanging fake). The SDK has no client-level switch (only
+ * a per-query `.retry(false)`); its PostgREST client carries the flag every
+ * query builder copies, so it is cleared here. serviceClientTimeout.test.ts
+ * holds the SDK to this: one attempt per call on a bounded client.
+ */
+function disableReadRetries(client: unknown) {
+  const rest = (client as unknown as { rest?: { retry?: boolean } }).rest;
+  if (rest) rest.retry = false;
+}
+

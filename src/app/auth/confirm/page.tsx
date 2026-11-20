@@ -1,0 +1,126 @@
+import type { Metadata } from "next";
+import { redirect } from "next/navigation";
+import Link from "next/link";
+import { cookies } from "next/headers";
+import AuthShell from "@/components/auth/AuthShell";
+import ContinueButton from "@/components/auth/ContinueButton";
+import { authLinkFailurePath, legacyErrorReason, parseTokenLink } from "@/lib/auth/authLink";
+import { alreadySignedInNotice } from "@/lib/auth/authCopy";
+import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
+
+export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "Continue to FanFunnel", robots: { index: false, follow: false } };
+
+const HEADLINE: Record<string, { title: string; body: string; cta: string }> = {
+  recovery: { title: "Reset your password", body: "Tap Continue to choose a new password for your FanFunnel account.", cta: "Continue to reset my password" },
+  invite: { title: "Accept your invitation", body: "Tap Continue to set a password and open your new FanFunnel account.", cta: "Continue and set my password" },
+  email_change: { title: "Confirm your e-mail change", body: "Tap Continue to confirm this address for your FanFunnel account.", cta: "Continue and confirm" },
+  magiclink: { title: "Sign in to FanFunnel", body: "Tap Continue to sign in. No password needed.", cta: "Continue and sign in" },
+  email: { title: "Confirm your e-mail", body: "Tap Continue to confirm your e-mail address and carry on with your creator request.", cta: "Continue and confirm" },
+  signup: { title: "Confirm your e-mail", body: "Tap Continue to confirm your e-mail address and carry on with your creator request.", cta: "Continue and confirm" },
+};
+
+// Fixed sentences for `?retry=<flag>` (the verify route sends a request back
+// here with the token unspent); the flag only picks one, it is never shown.
+const RETRY_NOTICE: Record<string, string> = {
+  busy: "We couldn't check your link just now (too many tries, or a problem on our side). Nothing was used up and your link is still good: wait a few minutes, then tap the button again.",
+  origin:
+    "For your safety we only accept this step from this page. Nothing was used up: tap the button below to carry on. If you keep landing here, open the link from your e-mail in Chrome, Safari, Firefox or Edge.",
+};
+
+const SESSION_COOKIE_NAME = /^sb-[A-Za-z0-9_-]+-auth-token(?:\.\d+)?$/;
+
+/**
+ * Review A4: the e-mail of the account this browser is signed in to, if any,
+ * so the page can say that continuing switches accounts. Asked of the Auth
+ * server (getUser) and only when a session cookie is present: a mail scanner
+ * or a signed-out visitor never causes a Supabase call. Bounded: a slow Auth
+ * server must not hold up the page; the notice is simply left out. The proxy
+ * runs on this path (src/proxy.ts), so a session refreshed by this read keeps
+ * its cookie.
+ */
+async function signedInEmail(): Promise<string | null> {
+  if (!isSupabaseConfigured()) return null;
+  try {
+    const jar = await cookies();
+    if (!jar.getAll().some((c) => SESSION_COOKIE_NAME.test(c.name))) return null;
+    const sb = await createClient();
+    const result = await Promise.race([
+      sb.auth.getUser(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+    ]);
+    return result?.data.user?.email ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Target of every e-mail template link: {{ .SiteURL }}/auth/confirm with
+ * `token_hash` + `type` + a fixed `next` (never built from .RedirectTo; see
+ * supabase/templates/README.md). This page spends nothing: it shows a button
+ * whose form POSTs the token to /auth/confirm/verify, so a mail scanner or
+ * link preview that fetches the URL cannot consume the one-time link
+ * (WU-02 / WA-05). No script auto-submits it: sandboxes run scripts too.
+ */
+export default async function ConfirmLandingPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const raw = await searchParams;
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(raw)) if (typeof v === "string") params.set(k, v);
+  // A legacy PKCE link that was pointed here: the callback route exchanges it.
+  if (params.get("code") && !params.has("token_hash")) {
+    const cb = new URLSearchParams({ code: params.get("code")! });
+    if (params.get("next")) cb.set("next", params.get("next")!);
+    if (params.get("type")) cb.set("type", params.get("type")!);
+    redirect(`/auth/callback?${cb}`);
+  }
+  // Supabase's own error redirect of a legacy link (?error=…&error_code=…).
+  const legacy = params.has("token_hash") ? null : legacyErrorReason(params);
+  if (legacy) redirect(authLinkFailurePath(params.get("type"), legacy));
+  const link = parseTokenLink(params);
+  if (!link) redirect(authLinkFailurePath(params.get("type"), "malformed"));
+  const signedInAs = await signedInEmail();
+  const copy = HEADLINE[link.type] ?? HEADLINE.email;
+  const notice = RETRY_NOTICE[params.get("retry") ?? ""];
+
+  return (
+    <AuthShell>
+      <form method="post" action="/auth/confirm/verify" className="rounded-2xl border border-white/10 bg-white/5 p-6 text-white" data-testid="auth-continue">
+        <h1 className="text-lg font-bold">{copy.title}</h1>
+        <p className="mt-2 text-sm text-white/60">{copy.body}</p>
+        {notice && (
+          <p role="status" data-testid="auth-continue-notice" className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
+            {notice}
+          </p>
+        )}
+        <input type="hidden" name="token_hash" value={link.tokenHash} />
+        <input type="hidden" name="type" value={link.type} />
+        <input type="hidden" name="next" value={link.next} />
+        {signedInAs && (
+          <p data-testid="auth-continue-signed-in" className="mt-3 rounded-xl border border-white/15 bg-white/5 p-3 text-sm text-white/80">
+            {alreadySignedInNotice(signedInAs)}
+          </p>
+        )}
+        <ContinueButton
+          label={copy.cta}
+          className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-xl btn-brand px-4 py-2.5 font-bold disabled:opacity-60"
+        />
+        <p className="mt-4 text-xs text-white/50">
+          This link works once, on any device, for a limited time after it was sent. Nothing happens until you tap the button, so a
+          mail app that opened it for you first did no harm.
+        </p>
+        <p className="mt-3 text-xs text-white/50">
+          Didn&rsquo;t ask for this?{" "}
+          <Link href="/login" className="font-semibold text-white underline underline-offset-4">
+            Go to sign in
+          </Link>{" "}
+          instead.
+        </p>
+      </form>
+    </AuthShell>
+  );
+}

@@ -5,7 +5,9 @@
  * Run:  node scripts/seed-agency.mjs
  * Needs (from .env.local — loaded automatically if present):
  *   NEXT_PUBLIC_SUPABASE_URL
+ *   NEXT_PUBLIC_SUPABASE_ANON_KEY
  *   SUPABASE_SERVICE_ROLE_KEY   (server-only key; bypasses RLS)
+ *   FANFUNNEL_TEST_BASE_URL     (running loopback server backed by TEST)
  *
  * Idempotent: re-running re-uses existing auth users and rebuilds sample data.
  * A fresh strong random password is generated for every account on each run and
@@ -13,7 +15,8 @@
  */
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { requireTestProject, requireLocalTestServer, createFixturePass, fixtureData } from "../e2e/economic-fixtures.mjs";
 
 // --- Tiny .env.local loader (no extra deps) ---------------------------------
 try {
@@ -27,10 +30,14 @@ try {
 
 const URL_ = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-if (!URL_ || !KEY) {
-  console.error("✗ Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (in .env.local).");
+const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+if (!URL_ || !KEY || !ANON) {
+  console.error("✗ Set NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY (in .env.local).");
   process.exit(1);
 }
+requireTestProject(URL_);
+const testBase = requireLocalTestServer(process.env.FANFUNNEL_TEST_BASE_URL);
+const actors = new Map();
 const sb = createClient(URL_, KEY, { auth: { autoRefreshToken: false, persistSession: false } });
 
 // Generate a strong, random password (no hardcoded credentials). 24 url-safe
@@ -91,11 +98,16 @@ async function ensureUser(p) {
     .update({
       display_name: p.name,
       approval_status: "approved",
+      role: "creator",
       is_active: true,
       org_id: null, // reset; we set memberships explicitly below
       leaderboard_enabled: true,
     })
     .eq("id", user.id);
+  const client = createClient(URL_, ANON, { auth: { autoRefreshToken: false, persistSession: false } });
+  const { error: signInError } = await client.auth.signInWithPassword({ email: p.email, password: p.password });
+  if (signInError) throw new Error(`Sign in fixture actor: ${signInError.message}`);
+  actors.set(user.id, { id: user.id, client });
   return user.id;
 }
 
@@ -108,18 +120,23 @@ async function wipeCreatorData(creatorId) {
   await sb.from("wheels").delete().eq("creator_id", creatorId);
 }
 
-const RARITIES = ["common", "common", "uncommon", "rare", "epic", "legendary"];
-const token = () => Math.random().toString(36).slice(2, 10);
+async function applicationPost(path, body) {
+  const response = await fetch(testBase + path, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body), signal: AbortSignal.timeout(30_000) });
+  const result = await response.json();
+  if (!response.ok) throw new Error(`Local TEST application refused ${path}: ${response.status} ${result.error ?? "unknown error"}`);
+  return result;
+}
 
 async function seedCreatorContent(creatorId, slug) {
   await wipeCreatorData(creatorId);
   await sb.from("profiles").update({ public_slug: slug }).eq("id", creatorId);
 
-  const { data: wheel } = await sb
+  const wheel = fixtureData(await sb
     .from("wheels")
     .insert({ creator_id: creatorId, title: `${slug}'s Wheel`, subtitle: "Every spin wins!" })
     .select("id")
-    .single();
+    .single(), "seed wheel");
 
   const prizeDefs = [
     { label: "Shoutout", rarity: "common", weight: 30, emoji: "📣" },
@@ -128,10 +145,10 @@ async function seedCreatorContent(creatorId, slug) {
     { label: "VIP Month", rarity: "epic", weight: 5, emoji: "👑", stock: 3 },
     { label: "1-on-1 Call", rarity: "legendary", weight: 2, emoji: "💎", stock: 1 },
   ];
-  const { data: prizes } = await sb
+  fixtureData(await sb
     .from("prizes")
     .insert(prizeDefs.map((p, i) => ({ ...p, wheel_id: wheel.id, sort_order: i })))
-    .select("id, label, rarity");
+    .select("id, label, rarity"), "seed prizes");
 
   // Three fans, opted into the leaderboard, with grants (revenue) + spins (wins).
   const fanDefs = [
@@ -140,39 +157,22 @@ async function seedCreatorContent(creatorId, slug) {
     { handle: "rae", name: "Rae", spent: 800, spins: 1 },
   ];
   for (const f of fanDefs) {
-    const { data: fan } = await sb
-      .from("fans")
-      .insert({
-        creator_id: creatorId,
-        handle: f.handle,
-        display_name: f.name,
-        spins_remaining: 2,
-        spins_granted_total: f.spins + 2,
-        leaderboard_opt_in: true,
-      })
-      .select("id")
-      .single();
-    const { data: pass } = await sb
-      .from("fan_passes")
-      .insert({ token: token(), creator_id: creatorId, wheel_id: wheel.id, fan_id: fan.id })
-      .select("id, token")
-      .single();
-    await sb
-      .from("grants")
-      .insert({ creator_id: creatorId, fan_id: fan.id, spins: f.spins + 2, amount_cents: f.spent });
-    // Record a few wins, biased toward rares so the ticker + leaderboard light up.
+    const pass = await createFixturePass(sb, actors.get(creatorId), { wheelId: wheel.id, name: f.name, spins: f.spins + 2, amountCents: f.spent });
+    const metadata = await sb.from("fans").update({ handle: f.handle, leaderboard_opt_in: true }).eq("id", pass.fanId);
+    if (metadata.error) throw new Error(`Seed fan metadata: ${metadata.error.message}`);
+    // Use the real application for consent and multi-prize fairness. A loopback
+    // server configured to a different DB cannot resolve this TEST-only token.
+    await applicationPost("/api/fans/ack", { token: pass.token });
     for (let i = 0; i < f.spins; i++) {
-      const prize = prizes[Math.min(i, prizes.length - 1)];
-      await sb.from("spins").insert({
-        fan_pass_id: pass.id,
-        creator_id: creatorId,
-        wheel_id: wheel.id,
-        fan_id: fan.id,
-        prize_id: prize.id,
-        prize_label: prize.label,
-        prize_rarity: prize.rarity,
-      });
+      const intent = { token: pass.token, requestId: randomUUID(), clientSeed: "agency-fixture" };
+      const result = await applicationPost("/api/spin", intent);
+      if (!result.shareId || result.spinsRemaining !== f.spins + 1 - i) throw new Error("Application seed did not return the expected atomic win and balance.");
+      const replay = await applicationPost("/api/spin/status", intent);
+      if (replay.status !== "committed" || replay.result.shareId !== result.shareId) throw new Error("Could not verify the immutable seeded win.");
     }
+    const fan = fixtureData(await sb.from("fans").select("spins_remaining").eq("id", pass.fanId).single(), "seeded fan balance");
+    if (fan.spins_remaining !== 2) throw new Error("Seeded fan does not equal the expected remaining pass balance.");
+
     console.log(`    fan @${f.handle} → /spin/${pass.token}`);
   }
 }

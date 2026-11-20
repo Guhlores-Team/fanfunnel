@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { setOnboardingDismissed } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { limitRoute } from "@/lib/api/limit";
 
 // Persist the creator's Get-started checklist dismissal to their account, so it
 // follows them across devices instead of living in one browser's localStorage.
 export async function POST(req: Request) {
+  const rateLimited = await limitRoute(req, "account/onboarding:POST");
+  if (rateLimited) return rateLimited;
   const body = await parseJsonBody<{ dismissed?: boolean }>(req);
   if (body === BAD_REQUEST) return badRequest();
 

@@ -1,0 +1,80 @@
+import assert from "node:assert/strict";
+import { mock } from "node:test";
+import { FakeSupabase, type Row } from "@/lib/data/fakeSupabase";
+const OWNER = "a0000000-0000-4000-8000-000000000001", OTHER = "b0000000-0000-4000-8000-000000000002";
+const db = new FakeSupabase(OWNER);
+let signedIn = true, services = 0, lost = 0, malformed = false;
+mock.module("@/lib/supabase/server", { namedExports: {
+  isSupabaseConfigured: () => true,
+  createClient: async () => ({ ...db.client(), auth: { getUser: async () => ({ data: { user: signedIn ? { id: OWNER, user_metadata: { role: "admin" } } : null }, error: null }) } }),
+  createServiceClient: () => { services++; return { rpc: async (name: string, args: Row) => {
+    const result = await db.client().rpc(name, args);
+    if (lost-- > 0) throw new Error("reply lost after committed edit");
+    return malformed ? { data: { status: "updated", grantId: "wrong-grant", replayed: true }, error: null } : result;
+  } }; },
+} });
+mock.module("@/lib/data", { namedExports: { editGrant: async (id: string, patch: { spins?: number; amountCents?: number; campaignId?: string | null }, requestId: string) => (await import("@/lib/data/fans")).editGrant(id, patch, requestId) } });
+let checks = 0;
+const check = (label: string, condition: unknown) => { assert.ok(condition, label); checks++; };
+async function main() {
+  const { PATCH } = await import("./route");
+  const fan = db.seed("fans", { creator_id: OWNER });
+  const pass = db.seed("fan_passes", { creator_id: OWNER, fan_id: fan.id, token: "test-edit-token", spins_remaining: 10, spins_granted_total: 10 });
+  const grant = db.seed("grants", { creator_id: OWNER, fan_id: fan.id, fan_pass_id: pass.id, spins: 10 });
+  const context = { params: Promise.resolve({ id: String(grant.id) }) };
+  const patch = (body: unknown) => PATCH(new Request("http://localhost/api/grants/test", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }), context);
+  for (const body of [{ spins: 20 }, { requestId: "bad", spins: 20 }, { requestId: OWNER.toUpperCase(), spins: 20 }, { requestId: null, spins: 20 }]) check("missing/noncanonical intent refuses before service access", (await patch(body)).status === 400 && services === 0);
+  signedIn = false;
+  check("signed-out edit cannot enter the privileged transaction", (await patch({ requestId: crypto.randomUUID(), spins: 20 })).status === 401 && services === 0);
+  signedIn = true; db.permissions[OWNER] = false;
+  check("editable metadata cannot grant permission", (await patch({ requestId: crypto.randomUUID(), spins: 20 })).status === 401 && services === 0);
+  db.permissions[OWNER] = true;
+  const firstId = crypto.randomUUID();
+  lost = 1;
+  let response = await patch({ requestId: firstId, spins: 20 });
+  let body = await response.json();
+  check("lost first reply recovers the same edit with one delta", response.status === 200 && body.ok === true && body.requestId === firstId && body.grantId === grant.id && body.replayed === true && pass.spins_remaining === 20);
+  const calls = db.rpcCalls.filter(call => call.name === "edit_pass_grant" && call.args.p_request === firstId);
+  check("transport retries keep exact patch, request and real actor", calls.length === 2 && JSON.stringify(calls[0].args) === JSON.stringify(calls[1].args) && calls[0].args.p_actor === OWNER && JSON.stringify(calls[0].args.p_patch) === '{"spins":20}');
+  const secondId = crypto.randomUUID();
+  response = await patch({ requestId: secondId, spins: 12 });
+  check("new intentional absolute edit applies normally", response.status === 200 && pass.spins_remaining === 12 && grant.spins === 12);
+  response = await patch({ requestId: firstId, spins: 20 });
+  body = await response.json();
+  check("stale committed retry never reapplies its delta after a newer edit", response.status === 200 && body.replayed === true && pass.spins_remaining === 12 && grant.spins === 12);
+  check("safe HTTP receipt omits obsolete grant terms and secrets", Object.keys(body).sort().join() === "grantId,ok,replayed,requestId" && response.headers.get("cache-control") === "no-store");
+  response = await patch({ requestId: firstId, spins: 21 });
+  check("changed payload under the original UUID conflicts", response.status === 409 && pass.spins_remaining === 12);
+  const beforeMoney = Number(pass.spins_remaining), moneyId = crypto.randomUUID();
+  response = await patch({ requestId: moneyId, amountCents: 99 });
+  check("amount-only patch preserves current spins and campaign presence", response.status === 200 && grant.amount_cents === 99 && pass.spins_remaining === beforeMoney && JSON.stringify(db.rpcCalls.filter(call => call.name === "edit_pass_grant").at(-1)?.args.p_patch) === '{"amountCents":99}');
+  response = await patch({ requestId: moneyId, amountCents: 99, campaignId: null });
+  check("omitted campaign differs from explicit clear in the binding", response.status === 409 && grant.amount_cents === 99);
+  fan.break_until = "2999-01-01T00:00:00Z";
+  response = await patch({ requestId: firstId, spins: 20 });
+  check("already committed retry survives a later fan break", response.status === 200 && pass.spins_remaining === 12);
+  response = await patch({ requestId: crypto.randomUUID(), spins: 13 });
+  check("F6 still refuses a new increasing edit during the break", response.status === 403 && (await response.json()).error === "on_break" && pass.spins_remaining === 12);
+  fan.break_until = null;
+  const campaign = db.seed("campaigns", { creator_id: OWNER });
+  const campaignId = crypto.randomUUID();
+  check("explicit campaign update remains available", (await patch({ requestId: campaignId, campaignId: campaign.id })).status === 200);
+  db.tables.campaigns = [];
+  check("replay does not revalidate a deleted mutable campaign", (await patch({ requestId: campaignId, campaignId: campaign.id })).status === 200);
+  const unknownId = crypto.randomUUID(); lost = 2;
+  response = await patch({ requestId: unknownId, spins: 14 });
+  check("ambiguous committed reply stays pending with its original UUID", response.status === 503 && (await response.json()).requestId === unknownId && pass.spins_remaining === 14 && grant.spins === 14);
+  response = await patch({ requestId: unknownId, spins: 14 });
+  check("retry recovers unresolved edit without extra credit", response.status === 200 && (await response.json()).replayed === true && pass.spins_remaining === 14);
+  malformed = true;
+  response = await patch({ requestId: unknownId, spins: 14 });
+  check("malformed success receipt never releases an uncertain operation", response.status === 503 && (await response.json()).error === "edit_pending");
+  malformed = false;
+  const foreignFan = db.seed("fans", { creator_id: OTHER });
+  const foreignGrant = db.seed("grants", { creator_id: OTHER, fan_id: foreignFan.id, spins: 1 });
+  const beforeForeign = services;
+  response = await PATCH(new Request("http://localhost/api/grants/foreign", { method: "PATCH", body: JSON.stringify({ requestId: crypto.randomUUID(), spins: 2 }) }), { params: Promise.resolve({ id: String(foreignGrant.id) }) });
+  check("cross-tenant edit is denied before service transaction", response.status === 401 && services === beforeForeign && foreignGrant.spins === 1);
+  console.log(`durable grant edit HTTP route: ${checks} checks passed`);
+}
+main().catch(error => { console.error(error); process.exit(1); });

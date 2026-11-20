@@ -1,0 +1,17 @@
+import assert from "node:assert/strict";
+import { mockGetAdminOverview, mockUpdateAccount } from "./mock";
+import { accountErrorMessage } from "@/components/admin/adminErrors";
+let checks=0;const check=(value:unknown,label:string)=>{assert.ok(value,label);checks++;};
+assert.throws(()=>mockUpdateAccount("acc-you",{isActive:false}),/last_admin/);checks++;
+assert.throws(()=>mockUpdateAccount("acc-you",{role:"creator"}),/last_admin/);checks++;
+mockUpdateAccount("acc-jade",{role:"admin"});
+assert.throws(()=>mockUpdateAccount("acc-you",{isActive:false}),/last_admin/);checks++;
+check(mockGetAdminOverview().accounts.find(a=>a.id==="acc-you")?.isActive,"refused mutations leave original admin active");
+mockUpdateAccount("acc-jade",{isActive:true});
+check(!!mockUpdateAccount("acc-you",{role:"creator"}),"another active admin permits demotion");
+assert.throws(()=>mockUpdateAccount("acc-jade",{isActive:false}),/last_admin/);checks++;
+check(mockGetAdminOverview().accounts.filter(a=>a.role==="admin"&&a.isActive).length===1,"one active administrator remains");
+check(accountErrorMessage("last_admin").includes("another admin"),"blocked administrator receives a concrete recovery instruction");
+check(accountErrorMessage("account_cleanup_pending").includes("before reactivating"),"pending deletion gives truthful recovery guidance");
+check(!accountErrorMessage("private-token-123").includes("private-token-123"),"unknown server details never reach user copy");
+console.log(`active-admin mock and UI: ${checks} checks passed`);

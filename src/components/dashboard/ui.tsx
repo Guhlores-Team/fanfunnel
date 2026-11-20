@@ -57,7 +57,7 @@ function TagEditor({
           {tags.map((t) => (
             <span
               key={t}
-              className="inline-flex items-center gap-1 rounded-full border border-[var(--brand)]/40 bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] px-2 py-0.5 text-xs font-semibold text-ink"
+              className="inline-flex items-center gap-1.5 rounded-full border border-[color-mix(in_oklab,var(--brand-ui)_40%,transparent)] bg-[color-mix(in_oklab,var(--brand-ui)_12%,transparent)] py-[3px] pl-[11px] pr-1.5 text-xs font-semibold text-[color-mix(in_oklab,var(--brand-text)_72%,white)]"
             >
               {t}
               <button
@@ -65,7 +65,7 @@ function TagEditor({
                 disabled={disabled}
                 onClick={() => commit(tags.filter((x) => x !== t))}
                 aria-label={`Remove tag ${t}`}
-                className="text-muted transition hover:text-ink disabled:opacity-50"
+                className="relative grid h-4 w-4 place-items-center rounded-full text-[13px] leading-none text-muted transition hover:text-ink disabled:opacity-50 max-sm:h-6 max-sm:w-6 max-sm:after:absolute max-sm:after:-inset-2.5 max-sm:after:content-['']"
               >
                 ×
               </button>
@@ -84,10 +84,10 @@ function TagEditor({
               disabled={disabled}
               onClick={() => toggle(preset)}
               aria-pressed={active}
-              className={`rounded-full px-2.5 py-0.5 text-xs font-semibold transition disabled:opacity-50 ${
+              className={`rounded-full border px-3 py-[3px] text-xs font-semibold transition disabled:opacity-50 max-sm:min-h-11 max-sm:px-3.5 ${
                 active
-                  ? "bg-[var(--brand)] text-white"
-                  : "border border-line text-muted hover:text-ink"
+                  ? "border-[var(--brand-ui)] bg-[var(--brand-ui)] text-[var(--brand-ink)]"
+                  : "border-line text-muted hover:text-ink"
               }`}
             >
               {preset}
@@ -96,7 +96,7 @@ function TagEditor({
         })}
         <span className="inline-flex items-center gap-1">
           <input
-            className="ff-input w-28 py-1 text-xs"
+            className="ff-input w-24 rounded-full py-1 text-xs"
             placeholder="Add tag"
             value={draft}
             disabled={disabled}
@@ -127,15 +127,23 @@ function Field({
   label,
   children,
   full,
+  error,
 }: {
   label: string;
   children: React.ReactNode;
   full?: boolean;
+  /** WC-18: what is wrong with this field, said under it (and announced). */
+  error?: string | null;
 }) {
   return (
     <label className={`flex min-w-0 flex-col gap-1 ${full ? "sm:col-span-2" : ""}`}>
       <span className="text-xs font-semibold uppercase tracking-wider text-muted">{label}</span>
       {children}
+      {error && (
+        <span role="alert" data-testid="field-error" className="text-xs font-semibold text-[#fca5a5] text-pretty">
+          {error}
+        </span>
+      )}
     </label>
   );
 }
@@ -162,4 +170,40 @@ function EmptyState({
   );
 }
 
-export { EmptyState, Field, TagEditor };
+/** Up to two initials for an avatar tile ("@mia_rose" → "MR", "Jamie" → "J"). */
+function initialsOf(name: string): string {
+  return (
+    name
+      .replace(/^@/, "")
+      .split(/[\s._-]+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase())
+      .join("") || "?"
+  );
+}
+
+/** 34px square icon close button for dialogs, drawers and sheets. */
+function CloseButton({
+  onClick,
+  ref,
+}: {
+  onClick: () => void;
+  ref?: React.Ref<HTMLButtonElement>;
+}) {
+  return (
+    <button
+      ref={ref}
+      type="button"
+      onClick={onClick}
+      aria-label="Close"
+      className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-[9px] border border-line text-muted transition-colors hover:text-ink"
+    >
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+        <path d="M18 6 6 18M6 6l12 12" />
+      </svg>
+    </button>
+  );
+}
+
+export { CloseButton, EmptyState, Field, TagEditor, initialsOf };

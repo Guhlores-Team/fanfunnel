@@ -1,9 +1,11 @@
 "use client";
 
-import type { Prize } from "@/lib/games/wheel/types";
+import type { PublicPrize } from "@/lib/games/wheel/types";
 import { RARITY_COLORS, RARITY_ORDER } from "@/lib/games/wheel/types";
 import type { WonPrize } from "@/lib/data/types";
 import { externalUrl } from "@/lib/format";
+import { isPublicPrizeAvailable } from "@/lib/games/wheel/publicView";
+import { TOPUP_SCARCITY_AT } from "./stockDisplay";
 
 /**
  * The highest-intent moment in the funnel: the fan just hit 0 spins. Instead of
@@ -16,27 +18,28 @@ export default function TopUpMoment({
   creatorTitle,
   tipUrl,
 }: {
-  prizes: Prize[];
+  prizes: PublicPrize[];
   history: WonPrize[];
   creatorTitle: string;
   tipUrl?: string | null;
 }) {
   const wonLabels = new Set(history.map((w) => w.label));
-  // The rarest prize the fan hasn't won yet (descending rarity).
+  // The rarest prize the fan hasn't won yet (descending rarity). A sold-out
+  // prize has 0% odds, so it is never the one to chase (RM-2).
   const target = [...prizes]
-    .filter((p) => !wonLabels.has(p.label))
+    .filter((p) => !wonLabels.has(p.label) && isPublicPrizeAvailable(p))
     .sort(
       (a, b) => RARITY_ORDER.indexOf(b.rarity) - RARITY_ORDER.indexOf(a.rarity)
     )[0];
 
-  const color = target ? target.color ?? RARITY_COLORS[target.rarity] : "var(--brand)";
+  const color = target ? target.color ?? RARITY_COLORS[target.rarity] : "var(--brand-ui)";
 
   return (
     <div
       className="reveal w-full rounded-2xl border p-5 text-center"
       style={{
-        borderColor: "color-mix(in oklab, var(--brand) 50%, transparent)",
-        background: "color-mix(in oklab, var(--brand) 10%, transparent)",
+        borderColor: "color-mix(in oklab, var(--brand-ui) 50%, transparent)",
+        background: "color-mix(in oklab, var(--brand-ui) 10%, transparent)",
       }}
     >
       <p className="text-sm font-extrabold text-ink">Out of spins! 💖</p>
@@ -46,11 +49,14 @@ export default function TopUpMoment({
           <span className="font-bold" style={{ color }}>
             {target.emoji ?? "🎁"} {target.label}
           </span>{" "}
-          — top up and chase it.
+          {typeof target.stock === "number" && target.stock <= TOPUP_SCARCITY_AT && (
+            <span className="tnum font-semibold text-ink">(only {target.stock} left) </span>
+          )}
+          — more spins from {creatorTitle} give you another shot at it.
         </p>
       ) : (
         <p className="mt-1 text-sm text-muted">
-          Top up to keep spinning with {creatorTitle}.
+          More spins come from {creatorTitle}: fans can&rsquo;t get them here.
         </p>
       )}
       {tipUrl ? (
@@ -60,11 +66,13 @@ export default function TopUpMoment({
           rel="noopener noreferrer"
           className="btn-brand mt-4 inline-block w-full rounded-2xl py-3.5 text-base font-extrabold tracking-wide"
         >
-          Tip {creatorTitle} to unlock more spins →
+          Visit {creatorTitle}&rsquo;s page →
         </a>
       ) : (
-        <p className="mt-4 text-sm font-semibold text-brand">
-          Tip {creatorTitle} to unlock more spins.
+        // Plain text, not a link look-alike: without a tip link the way to more
+        // spins is to ask the creator.
+        <p className="mt-4 text-sm text-muted text-pretty" data-testid="topup-ask">
+          Ask {creatorTitle} for more spins.
         </p>
       )}
     </div>

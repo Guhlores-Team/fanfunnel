@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 // Accessibility scan — runs axe-core (WCAG 2.0/2.1 A + AA) against the key
 // pages in mock mode and fails the build on any *critical* or *serious*
 // violation (moderate/minor are reported as advisories so the gate is
@@ -8,7 +9,25 @@
 
 import { readFileSync } from "node:fs";
 import { chromium } from "playwright";
-import { startServer, stopServer, goto, passAgeGate, clickTab, log, BASE } from "./harness.mjs";
+import { acknowledgeFixtureFan, startServer, stopServer, goto, passAgeGate, clickTab, log, BASE, MORE_BUTTON, injectAxe, watchCsp } from "./harness.mjs";
+import { createRevealFan, forceRarity, clearForcedRarity, spinAndTime } from "./reveal.mjs";
+import { mintFanLink, fakeInstallPrompt, spinAndCloseWin, IPHONE_UA } from "./pwa.mjs";
+import { spinViaApi } from "./play.mjs";
+import { quietSpender } from "./winback.mjs";
+import { staleTermsRoute } from "./journeys.mjs";
+
+import { PUSH_STUB, pushConfig, openPushCard, turnPushOn, clearPushDevices } from "./push.mjs";
+import { instantA11yStates } from "./instant-a11y.mjs";
+import { systemHealthA11yStates } from "./system-health.mjs";
+import { themingA11yStates } from "./theming-a11y.mjs";
+import { focusA11yStates } from "./focus-a11y.mjs";
+import { scratchA11yStates, bingoA11yStates } from "./games-a11y.mjs";
+import { gameSwitchingA11yStates } from "./game-switching-a11y.mjs";
+import { safetyA11yStates } from "./safety-a11y.mjs";
+import { qaB5A11yStates } from "./qa-b5.mjs";
+import { fanDevicesA11yStates } from "./fan-devices.mjs";
+import { fanB7A11yStates } from "./fan-b7.mjs";
+import { trustB7A11yStates } from "./trust-b7.mjs";
 
 const AXE_SRC = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
 
@@ -16,42 +35,486 @@ const openTab = (name) => async (page) => {
   await clickTab(page, name);
   await page.waitForTimeout(600);
 };
+const openMore = async (page) => {
+  await page.locator(MORE_BUTTON).click();
+  await page.getByRole("dialog", { name: "More" }).waitFor({ timeout: 4000 });
+  await page.waitForTimeout(500);
+};
+// e2e's first-run step wipes the demo account before this scan runs on the same
+// server, so open whichever fan exists and create one if none does.
+const openFanSheet = async (page) => {
+  const { fans } = await (await page.request.get(BASE + "/api/fans")).json().catch(() => ({ fans: [] }));
+  if (!fans?.length) {
+    const res = await page.request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name: "A11y Fan", spins: 3 } });
+    if (!res.ok()) throw new Error(`could not create a fan for the scan (${res.status()})`);
+    await page.reload();
+  }
+  await clickTab(page, "Fans");
+  await page.getByRole("button", { name: /^View / }).first().click();
+  await page.getByRole("dialog", { name: "Fan details" }).waitFor({ timeout: 5000 });
+  await page.waitForTimeout(800);
+};
+// Admin › Errors with one expanded entry. The error is reported here through
+// the public endpoint, so the state does not depend on e2e's data.
+const openErrors = async (page) => {
+  await page.request.post(BASE + "/api/errors", {
+    data: { message: "A11y scan sample error", kind: "error", stack: "Error: A11y scan sample error\n    at scan (/a11y.js:1:1)", route: "/dashboard" },
+  });
+  await clickTab(page, "Admin");
+  const errors = page.getByRole("region", { name: "Errors", exact: true });
+  await errors.waitFor({ timeout: 8000 });
+  const item = errors.getByTestId("app-error").filter({ hasText: "A11y scan sample error" }).first();
+  for (let i = 0; i < 10 && !(await item.count()); i++) {
+    await errors.getByRole("button", { name: "Refresh" }).click();
+    await page.waitForTimeout(500);
+  }
+  await item.getByRole("button", { name: "Details" }).click();
+  await item.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(600);
+};
+
+// 0055: the creator's Terms prompt, forced by a stale version (the demo account
+// itself stays accepted, so nothing here depends on e2e's data).
+const openTermsPrompt = (ticked) => async (page) => {
+  await staleTermsRoute(page);
+  await page.reload();
+  await page.getByTestId("terms-prompt").waitFor({ timeout: 10000 });
+  if (ticked) await page.getByTestId("terms-prompt").getByTestId("terms-checkbox").check();
+  await page.waitForTimeout(400);
+};
+const closeTermsPrompt = async (page) => {
+  await page.unroute("**/api/account/terms").catch(() => {});
+};
+const DESKTOP = { width: 1280, height: 900 };
+const PHONE = { width: 390, height: 844 };
+
+// RM-4: the fan's home-screen install card, on a freshly minted link (so it
+// doesn't depend on demo data surviving the first-run wipe), in a fresh
+// context per platform (own storage, so no earlier "Not now" hides it).
+const installNudge = (platform) => async (page) => {
+  const token = await mintFanLink(page.request, 2);
+  await goto(page, `/spin/${token}`, 1800);
+  await passAgeGate(page);
+  if (platform === "android") await fakeInstallPrompt(page);
+  await spinAndCloseWin(page);
+  const nudge = page.locator("[data-testid='install-nudge']");
+  await nudge.waitFor({ timeout: 5000 });
+  if (platform === "ios") await nudge.getByRole("button", { name: "How" }).click();
+  await page.waitForTimeout(400);
+};
+const PHONE_CTX = { isMobile: true, hasTouch: true };
+const footerOverBadge = async (page) => {
+  const token = await mintFanLink(page.request, 1);
+  await goto(page, `/spin/${token}`, 1800);
+  await passAgeGate(page);
+  const parked = await page.evaluate(() => {
+    const badge = document.querySelector("[data-env-badge]");
+    const text = document.querySelector("footer > span");
+    if (!badge || !text) return false;
+    window.scrollBy(0, text.getBoundingClientRect().bottom - badge.getBoundingClientRect().bottom + 2);
+    const t = text.getBoundingClientRect(), b = badge.getBoundingClientRect();
+    return t.bottom > b.top && t.top < b.bottom;
+  });
+  if (!parked) throw new Error("could not park the fan footer on the Preview badge (badge needs NEXT_PUBLIC_ENABLE_DEBUG=1)");
+};
+
+// Web push: the Settings card in its states. Each runs in its own context so
+// the PushManager stub and route overrides stay local; none needs demo data.
+const pushCard = async (page) => {
+  await openPushCard(page);
+  await page.waitForTimeout(400);
+};
+const pushUnavailable = async (page) => {
+  await page.route("**/api/push/config", (r) => r.fulfill({ json: { available: false, publicKey: null } }));
+  await pushCard(page);
+};
+// With server keys: on for this device + names shown. Without: the card as is.
+const pushOn = async (page) => {
+  if (!(await pushConfig(page.request)).available) return pushCard(page);
+  await clearPushDevices(page.request);
+  await page.addInitScript(PUSH_STUB);
+  await turnPushOn(page);
+  await page.getByTestId("push-details-toggle").click();
+  await page.locator("[data-testid='push-details-toggle'][aria-checked='true']").waitFor({ timeout: 5000 });
+  await page.waitForTimeout(400);
+};
+const pushCleanup = async (page) => clearPushDevices(page.request);
+
+// RD-8: overlays and editors. Each prep only needs what survives e2e's
+// first-run wipe (the fan comes from openFanSheet, the rest is static UI).
+const openBell = async (page) => {
+  await page.getByTestId("notification-bell").click();
+  await page.getByRole("dialog", { name: "Notifications" }).waitFor({ timeout: 4000 });
+  await page.waitForTimeout(500);
+};
+const inDrawer = (name) => async (page) => {
+  await openFanSheet(page);
+  await page.getByRole("dialog", { name: "Fan details" }).getByRole("button", { name }).first().click();
+  await page.waitForTimeout(600);
+};
+const clickIn = (tab, name) => async (page) => {
+  await clickTab(page, tab);
+  await page.getByRole("button", { name }).first().click();
+  await page.waitForTimeout(600);
+};
+
+// Fairness v3: a fresh spin's verify page with its odds table. The fan and the
+// spin are made here, so the state doesn't depend on demo data surviving e2e.
+const openFreshVerify = async (page) => {
+  const pass = await (await page.request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name: "A11y Verify", spins: 1 } })).json();
+  if (!pass?.token) throw new Error("could not create a fan for the verify scan");
+  const ack = await acknowledgeFixtureFan(page.request, pass.token);
+  if (!ack.ok()) throw new Error(`could not acknowledge the age gate (${ack.status()})`);
+  const res = await page.request.post(BASE + "/api/spin", { data: { requestId: randomUUID(), token: pass.token, clientSeed: "a11y" } });
+  const spin = await res.json().catch(() => null);
+  if (!spin?.shareId) throw new Error(`could not spin for the verify scan (${res.status()})`);
+  await goto(page, `/verify/${spin.shareId}`, 1200);
+  await page.getByRole("table").waitFor({ timeout: 5000 });
+};
 
 // Pages to scan + an optional prep step to reach a meaningful state.
 //
 // `advisory` lists rule ids that are reported but NOT blocking for that page.
-// We keep every rule blocking on the public/fan/login pages, and treat
-// `color-contrast` as advisory on the AUTHENTICATED dashboard: small white-text
-// chips sit on the creator-customizable `--brand` (#ec4899 default = 3.52:1),
-// a known systemic brand-token issue tracked in ROADMAP.md — not silently
-// hidden, just not gating the whole suite on a brand redesign.
-const DASH_ADVISORY = ["color-contrast"];
+// The dashboard used to treat `color-contrast` as advisory while white text sat
+// on the creator's `--brand` (3.52:1 on the default pink). Brand fills now use
+// `--brand-ink` (readableInk) and initials avatars use ink on the brand tint,
+// so since RD-8 every rule blocks on every page, the dashboard included.
+const DASH_ADVISORY = [];
+// RM-1: the win reveal. A fresh fan each time (e2e's first-run step has wiped
+// the demo fan by now); the rarity is forced on the real spin response only.
+const openReveal = (rarity, { reduced = false } = {}) => async (page) => {
+  if (reduced) await page.emulateMedia({ reducedMotion: "reduce" });
+  const token = await createRevealFan(page.request, "A11y Reveal Fan", 2);
+  await goto(page, `/spin/${token}`, 1400);
+  await forceRarity(page, rarity);
+  await spinAndTime(page);
+  await page.getByTestId("reward-reveal").waitFor({ timeout: 9000 });
+  await page.waitForTimeout(900); // let the entrance settle
+};
+const closeReveal = async (page) => {
+  await page.emulateMedia({ reducedMotion: null }).catch(() => {});
+  await clearForcedRarity(page);
+};
+// RM-2: the fan page's Limited row and the prize book's counts. The wheel is
+// set through the creator API (e2e's first-run step may have left it empty),
+// with a low-stock, a sold-out and an unlimited prize, then a fresh fan.
+const openStock = async (page) => {
+  const { wheel } = await (await page.request.get(BASE + "/api/wheel")).json();
+  const prizes = [
+    { id: "a11y-s1", label: "Signed Polaroid", rarity: "epic", weight: 5, emoji: "📸", stock: 2 },
+    { id: "a11y-s2", label: "VIP Month Free", rarity: "legendary", weight: 1, emoji: "👑", stock: 0 },
+    { id: "a11y-s3", label: "Exclusive Selfie", rarity: "common", weight: 50, emoji: "🤳" },
+  ];
+  const put = await page.request.put(BASE + "/api/wheel", { data: { wheel: { ...wheel, showStock: true, prizes } } });
+  if (!put.ok()) throw new Error(`could not set a stocked wheel for the scan (${put.status()})`);
+  const token = await createRevealFan(page.request, "A11y Stock Fan", 2);
+  await goto(page, `/spin/${token}`, 1400);
+  await page.getByTestId("limited-stock").waitFor({ timeout: 8000 });
+  await page.getByRole("button", { name: /Prize book/ }).click();
+  await page.waitForTimeout(400);
+};
+
+// RM-6: the fan's "Your play" card, the reminder card and the break, each on a
+// fresh fan made here (nothing depends on demo data surviving e2e).
+const playFan = async (page, name, spins = 3) => createRevealFan(page.request, name, spins);
+const openYourPlay = async (page) => {
+  const token = await playFan(page, "A11y Play Fan");
+  await goto(page, `/spin/${token}`, 1400);
+  await page.getByRole("button", { name: /^Your play/ }).click();
+  await page.getByRole("radio", { name: "Off" }).waitFor({ timeout: 4000 });
+  await page.getByRole("button", { name: "7 days" }).click();
+  await page.getByTestId("break-confirm").waitFor({ timeout: 3000 });
+};
+const openBreather = async (page) => {
+  const token = await playFan(page, "A11y Breather Fan", 22);
+  const set = await page.request.post(BASE + "/api/fan/reminder", { data: { token, daily: 20 } });
+  if (!set.ok()) throw new Error(`could not set a reminder for the scan (${set.status()})`);
+  await spinViaApi(page.request, token, 20);
+  await goto(page, `/spin/${token}`, 1400);
+  await page.getByRole("button", { name: /^SPIN$/ }).click();
+  await page.getByTestId("breather-card").waitFor({ timeout: 4000 });
+  await page.waitForTimeout(600);
+};
+const takeBreakFor = async (page, name) => {
+  const token = await playFan(page, name);
+  const res = await page.request.post(BASE + "/api/fan/break", { data: { token, duration: "7d" } });
+  if (!res.ok()) throw new Error(`could not start a break for the scan (${res.status()})`);
+  return token;
+};
+const openOnBreak = async (page) => {
+  const token = await takeBreakFor(page, "A11y Break Fan");
+  await goto(page, `/spin/${token}`, 1400);
+  await page.getByTestId("break-status").waitFor({ timeout: 4000 });
+  await page.getByRole("button", { name: /^Your play/ }).click();
+  await page.waitForTimeout(400);
+};
+const openDrawerOnBreak = async (page) => {
+  const name = `A11y Resting Fan ${Date.now().toString(36)}`;
+  await takeBreakFor(page, name);
+  await page.reload();
+  await clickTab(page, "Fans");
+  await page.getByRole("button", { name: `View ${name}` }).first().click();
+  await page.getByRole("dialog", { name: "Fan details" }).getByTestId("fan-on-break").waitFor({ timeout: 6000 });
+  await page.waitForTimeout(600);
+};
+
+// RM-3: the full visit glow ("Regular ✨") and the milestone toast on a fresh
+// acknowledged link. The check-in answer is the server's for a fan on day 7 of
+// 7 (the counting is unit-tested); the state's own context keeps the route
+// from leaking into later scans.
+const openGlow = async (page) => {
+  await page.route("**/api/fan/checkin", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ glow: { visits: 7, level: 3 }, milestone: "week" }) })
+  );
+  const token = await createRevealFan(page.request, "A11y Glow Fan", 2);
+  await goto(page, `/spin/${token}`, 1400);
+  await page.getByTestId("glow-milestone").waitFor({ timeout: 8000 });
+  await page.getByTestId("glow-regular").waitFor({ timeout: 4000 });
+};
+
+// RM-5: the win-back card (rows, stats, recently contacted) and the queue
+// sheet. Each prep makes its own quiet paying fans (aged by the demo-only
+// debug route), so nothing depends on demo data surviving e2e's wipe.
+const openWinbackCard = async (page) => {
+  const a = await quietSpender(page.request, "A11y Quiet One", 15);
+  await quietSpender(page.request, "A11y Quiet Two", 12);
+  const logged = await page.request.post(BASE + "/api/crm/outreach", { data: { fanId: a.fanId, action: "contacted" } });
+  if (!logged.ok()) throw new Error(`could not log a contact for the scan (${logged.status()})`);
+  await goto(page, "/dashboard", 1600);
+  await clickTab(page, "Analytics");
+  const card = page.getByTestId("winback-card");
+  await card.getByTestId("winback-row").first().waitFor({ timeout: 8000 });
+  await card.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(400);
+};
+const openWinbackQueue = async (page) => {
+  await quietSpender(page.request, "A11y Queue Fan", 9);
+  await goto(page, "/dashboard", 1600);
+  await clickTab(page, "Analytics");
+  await page.getByTestId("winback-card").scrollIntoViewIfNeeded();
+  await page.getByRole("button", { name: "Start win-back" }).click();
+  await page.getByRole("dialog", { name: "Win-back queue" }).waitFor({ timeout: 5000 });
+  await page.waitForTimeout(500);
+};
+
+// Privacy & safety: the fan's Safety menu (download/delete), the delete
+// confirm step, the page a deleted link shows, the 404 rescue controls and the
+// creator's Close-my-account form. Each uses a freshly minted fan link, so
+// none depends on demo data surviving e2e's first-run wipe.
+const openSafety = (then) => async (page) => {
+  const token = await mintFanLink(page.request, 2);
+  await goto(page, `/spin/${token}`, 1600);
+  await passAgeGate(page);
+  await page.getByRole("button", { name: "Safety & privacy" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Safety and privacy" });
+  await dialog.waitFor({ timeout: 5000 });
+  if (then === "delete") {
+    await dialog.getByRole("button", { name: /Delete my data/ }).click();
+    await dialog.getByLabel("Type DELETE to confirm").waitFor({ timeout: 4000 });
+  }
+  await page.waitForTimeout(400);
+};
+const openDeletedLink = async (page) => {
+  const token = await mintFanLink(page.request, 1);
+  // From an address of this scan's own: deletes are budgeted per address (ten
+  // an hour), so the scan shares no bucket with the journeys or with an
+  // earlier scan on the same server.
+  const from = `198.18.${Math.floor(Math.random() * 256)}.${1 + Math.floor(Math.random() * 254)}`;
+  const res = await page.request.post(BASE + "/api/fan-data/delete", { headers: { "x-real-ip": from }, data: { token, confirm: "DELETE" } });
+  if (!res.ok()) throw new Error(`could not delete the scan fan (${res.status()})`);
+  await goto(page, `/spin/${token}`, 1200);
+  await page.getByRole("heading", { name: "This link was deleted" }).waitFor({ timeout: 8000 });
+};
+const openLinkRescue = async (page) => {
+  await page.getByRole("button", { name: /Was this your link/ }).click();
+  await page.getByRole("button", { name: "Delete my data" }).waitFor({ timeout: 4000 });
+  await page.waitForTimeout(300);
+};
+const LEAVE_ORG = { id: "0a0a0a0a-0000-4000-8000-00000000000a", name: "A11y Talent" };
+const openLeaveAgency = (answer) => async (page) => {
+  await page.route("**/api/agency", (r) => r.fulfill({ json: answer }));
+  await goto(page, "/agency", 1200);
+  await page.getByRole("button", { name: "Leave agency" }).click();
+  await page.getByRole("group", { name: /Leave .*\?/ }).waitFor({ timeout: 5000 });
+};
+// b7: the agency page for a suspended account, and a seat whose agency's
+// owner is suspended (both answers stubbed in the state's own context).
+const openAgencyStanding = ({ viewerActive, agency, waitFor }) => async (page) => {
+  await page.route("**/api/agency", (r) => r.fulfill({ json: agency }));
+  if (!viewerActive) await page.route("**/api/account", (r) => r.fulfill({ json: { displayName: "A11y Creator", isActive: false } }));
+  await goto(page, "/agency", 1200);
+  await page.getByTestId(waitFor).waitFor({ timeout: 8000 });
+};
+const openCloseAccount = async (page) => {
+  await clickTab(page, "Settings");
+  await page.getByRole("button", { name: /Close my account/ }).click();
+  // Settings has other "Current password" fields (email/password change);
+  // the close form lives in the "Your data" section.
+  await page.getByRole("region", { name: "Your data" }).getByLabel("Current password").waitFor({ timeout: 4000 });
+  await page.waitForTimeout(300);
+};
+
 const PAGES = [
+  ...scratchA11yStates(),
+  ...bingoA11yStates(),
+  ...focusA11yStates(),
+  ...instantA11yStates(DASH_ADVISORY),
+  ...themingA11yStates(DASH_ADVISORY),
+  ...systemHealthA11yStates(DASH_ADVISORY),
+  ...gameSwitchingA11yStates(DASH_ADVISORY),
+  ...qaB5A11yStates(DASH_ADVISORY),
+  // b6 fan devices: the age gate and Safety sheet at 200% text and in
+  // landscape, each prep proving the primary action is on screen and tappable.
+  ...fanDevicesA11yStates(),
+  // b7: the in-app hint, the legal sheet over the gate, the spin cooldown.
+  ...fanB7A11yStates(),
+  ...trustB7A11yStates(DASH_ADVISORY), // TS-06: the announced Terms change on fan pages and the dashboard, and the admin card
   { path: "/", name: "landing" },
   { path: "/login", name: "login" },
+  // b7 auth: the Continue landing page, the failed-link and suspended notices,
+  // the e-mail change half-way page and the password pages.
+  { path: "/auth/confirm?token_hash=a11y-token-hash-0123456789&type=recovery", name: "auth link landing (Continue)" },
+  { path: "/auth/confirm?token_hash=a11y-token-hash-0123456789&type=invite", name: "auth link landing phone (invite)", viewport: PHONE },
+  { path: "/login?error=auth_link&type=invite&reason=expired", name: "login (expired invitation)" },
+  { path: "/login?error=auth_link&type=signup&reason=expired", name: "login phone (used confirmation)", viewport: PHONE },
+  { path: "/auth/confirm?token_hash=a11y-token-hash-0123456789&type=recovery&retry=busy", name: "auth link landing (still good, try again)" },
+  { path: "/auth/confirm?token_hash=a11y-token-hash-0123456789&type=recovery&retry=origin", name: "auth link landing phone (sent back to this page)", viewport: PHONE },
+  { path: "/login?error=auth_link&type=recovery&reason=busy", name: "login (link not checked, still good)" },
+  { path: "/login?error=auth_link&type=recovery&reason=banned", name: "login phone (blocked account)", viewport: PHONE },
+  { path: "/dashboard?auth_link=expired&type=email_change", name: "dashboard (failed e-mail change link notice)" },
+  { path: "/dashboard?auth_link=busy&type=recovery", name: "dashboard phone (link still good notice)", viewport: PHONE },
+  { path: "/login?suspended=1", name: "login (suspended)" },
+  { path: "/auth/email-change", name: "e-mail change step 1 of 2" },
+  { path: "/forgot-password", name: "forgot password" },
+  { path: "/reset-password", name: "reset password (demo)" },
+  { path: "/terms", name: "terms" },
+  { path: "/privacy", name: "privacy" },
   { path: "/c/demo", name: "link-in-bio" },
   { path: "/dashboard", name: "dashboard (Today)", advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Wheel editor)", prep: openTab("Wheel"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Fans)", prep: openTab("Fans"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Fulfilment)", prep: openTab("Fulfilment"), advisory: DASH_ADVISORY },
+  { path: "/admin", name: "admin System health", prep: async page => { await page.getByRole("region", { name: "System health", exact: true }).getByText("Demo only. No connected database or real reward keys have been checked.", { exact: true }).waitFor(); }, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Admin)", prep: openTab("Admin"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Analytics)", prep: openTab("Analytics"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Boosts)", prep: openTab("Boosts"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Settings)", prep: openTab("Settings"), advisory: DASH_ADVISORY },
+  // Phone layout (RD-6): bottom tab bar, the More sheet, the fan bottom sheet.
+  { path: "/dashboard", name: "dashboard phone (tab bar)", viewport: PHONE, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (More sheet)", viewport: PHONE, prep: openMore, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (fan sheet)", viewport: PHONE, prep: openFanSheet, advisory: DASH_ADVISORY },
+  // RD-8: every remaining section, the bell, the drawer and its menus, and the
+  // modals, on desktop and phone.
+  { path: "/dashboard", name: "dashboard (Inbox)", prep: openTab("Inbox"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Campaigns)", prep: openTab("Campaigns"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (bell panel)", prep: openBell, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (fan drawer)", prep: openFanSheet, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (fan drawer: top-up form)", prep: inDrawer("Top up spins"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (fan drawer: Copy DM menu)", prep: inDrawer(/^Copy DM/), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (fan drawer: QR dialog)", prep: inDrawer(/QR/), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (DM templates modal)", prep: clickIn("Fans", /Manage messages/), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Import fans)", prep: clickIn("Fans", /Import fans/), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (wheel Manage menu)", prep: clickIn("Wheel", /^Manage /), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Admin New account modal)", prep: clickIn("Admin", "New account"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Admin Errors)", prep: openErrors, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (Admin Errors)", viewport: PHONE, prep: openErrors, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (bell panel)", viewport: PHONE, prep: openBell, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (Wheels)", viewport: PHONE, prep: openTab("Wheels"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (Inbox)", viewport: PHONE, prep: openTab("Inbox"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (Analytics)", viewport: PHONE, prep: openTab("Analytics"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (Settings)", viewport: PHONE, prep: openTab("Settings"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Terms prompt)", prep: openTermsPrompt(false), cleanup: closeTermsPrompt, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Terms prompt, ticked)", prep: openTermsPrompt(true), cleanup: closeTermsPrompt, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (Terms prompt)", viewport: PHONE, prep: openTermsPrompt(false), cleanup: closeTermsPrompt, advisory: DASH_ADVISORY },
+
+  { path: null, name: "dashboard (Settings: push card)", context: {}, prep: pushCard, advisory: DASH_ADVISORY },
+  { path: null, name: "dashboard (Settings: push unavailable)", context: {}, prep: pushUnavailable, advisory: DASH_ADVISORY },
+  { path: null, name: "dashboard (Settings: push on, names shown)", context: {}, prep: pushOn, cleanup: pushCleanup, advisory: DASH_ADVISORY },
+  { path: null, name: "dashboard phone (push: iPhone Home Screen guide)", viewport: PHONE, context: { ...PHONE_CTX, userAgent: IPHONE_UA }, prep: pushCard, advisory: DASH_ADVISORY },
   { path: "/spin/demo", name: "fan spin (age gate)" },
   { path: "/spin/demo", name: "fan spin (wheel)", prep: passAgeGate },
+  { path: "/", name: "fan spin phone (legendary reveal)", viewport: PHONE, prep: openReveal("legendary"), cleanup: closeReveal },
+  { path: "/", name: "fan spin (reduced-motion reveal)", prep: openReveal("epic", { reduced: true }), cleanup: closeReveal },
+  { path: null, name: "fan spin (install nudge, Android)", viewport: PHONE, context: PHONE_CTX, prep: installNudge("android") },
+  { path: null, name: "fan spin (install nudge, iPhone guide)", viewport: PHONE, context: { ...PHONE_CTX, userAgent: IPHONE_UA }, prep: installNudge("ios") },
+  // The footer paints above the Preview badge, so a scroll that parks it on the
+  // badge band once failed contrast by chance. Park it there on purpose.
+  { path: null, name: "fan spin phone (footer over the Preview badge)", viewport: PHONE, context: PHONE_CTX, prep: footerOverBadge },
+  { path: "/", name: "verify (fairness v3 odds)", prep: openFreshVerify },
+  { path: "/", name: "verify phone (fairness v3 odds)", viewport: PHONE, prep: openFreshVerify },
+  // RM-2: "N left" chips + prize book counts. The editor's "Show stock to fans"
+  // switch is scanned by the Wheel editor states above.
+  { path: "/", name: "fan spin (limited stock + prize book)", prep: openStock },
+  { path: "/", name: "fan spin phone (limited stock + prize book)", viewport: PHONE, prep: openStock },
+  // RM-6: Your play (reminder + break confirm), the reminder card, a fan on a
+  // break, and the creator's drawer for that fan.
+  { path: "/", name: "fan spin (Your play open)", prep: openYourPlay },
+  { path: "/", name: "fan spin phone (Your play open)", viewport: PHONE, prep: openYourPlay },
+  { path: "/", name: "fan spin phone (reminder card)", viewport: PHONE, prep: openBreather },
+  { path: "/", name: "fan spin (on a break)", prep: openOnBreak },
+  { path: "/", name: "fan spin phone (on a break)", viewport: PHONE, prep: openOnBreak },
+  { path: "/dashboard", name: "dashboard (fan drawer: on a break)", prep: openDrawerOnBreak, advisory: DASH_ADVISORY },
+  // RM-3: full glow + "Regular ✨" + the one-time milestone toast.
+  { path: null, name: "fan spin (visit glow + milestone)", context: {}, prep: openGlow },
+  { path: null, name: "fan spin phone (visit glow + milestone)", viewport: PHONE, context: PHONE_CTX, prep: openGlow },
+  // RM-5: win-back list and queue.
+  { path: null, name: "dashboard (win-back card)", prep: openWinbackCard, advisory: DASH_ADVISORY },
+  { path: null, name: "dashboard (win-back queue)", prep: openWinbackQueue, advisory: DASH_ADVISORY },
+  { path: null, name: "dashboard phone (win-back queue)", viewport: PHONE, prep: openWinbackQueue, advisory: DASH_ADVISORY },
+  // Privacy & safety pack.
+  { path: null, name: "fan Safety menu (download/delete)", prep: openSafety() },
+  { path: null, name: "fan Safety menu phone (delete confirm)", viewport: PHONE, prep: openSafety("delete") },
+  { path: null, name: "fan link deleted page", prep: openDeletedLink },
+  { path: null, name: "fan link deleted page phone", viewport: PHONE, prep: openDeletedLink },
+  { path: "/spin/no-such-link-a11y", name: "fan link 404 (data rescue open)", prep: openLinkRescue },
+  { path: "/dashboard", name: "dashboard (Settings: Close my account)", prep: openCloseAccount, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (Settings: Close my account)", viewport: PHONE, prep: openCloseAccount, advisory: DASH_ADVISORY },
+  // A1/A4: Admin › Reports and a blocked fan.
+  ...safetyA11yStates(DASH_ADVISORY),
+  // A45/A53: the Agency console in the demo's "Demo only" create-agency state.
+  { path: "/agency", name: "agency (demo only: start an agency)", prep: async page => { await page.getByTestId("agency-demo-only").waitFor({ timeout: 8000 }); } },
+  { path: "/agency", name: "agency phone (demo only: start an agency)", viewport: PHONE, prep: async page => { await page.getByTestId("agency-demo-only").waitFor({ timeout: 8000 }); } },
+  // b6: Leave agency, asked to confirm (the demo has no agencies, so the
+  // /api/agency answer is stubbed in the state's own context).
+  { path: null, name: "agency (managed creator: leave confirmation)", context: {}, prep: openLeaveAgency({ org: null, managed: true, orgId: LEAVE_ORG.id }) },
+  { path: null, name: "agency phone (staff seat: leave confirmation)", viewport: PHONE, context: PHONE_CTX, prep: openLeaveAgency({ org: LEAVE_ORG, isOwner: false, totals: { creators: 0, fans: 0, spins: 0, pending: 0, revenue: 0 }, creators: [], members: [], invites: [] }) },
+  { path: null, name: "agency (suspended account: console paused)", context: {}, prep: openAgencyStanding({ viewerActive: false, agency: null, waitFor: "agency-suspended" }) },
+  { path: null, name: "agency phone (staff seat: owner suspended)", viewport: PHONE, context: PHONE_CTX, prep: openAgencyStanding({ viewerActive: true, agency: { org: LEAVE_ORG, isOwner: false, ownerActive: false, totals: { creators: 0, fans: 0, spins: 0, pending: 0, revenue: 0 }, creators: [], members: [], invites: [] }, waitFor: "agency-owner-suspended" }) },
 ];
 
 // Impacts that fail the build vs. advisory-only.
 const BLOCKING = new Set(["critical", "serious"]);
 
-async function scan(page, { path, name, prep, advisory = [] }) {
-  await goto(page, path, 1600);
+// The state preps wait a fixed few hundred ms after a click or a mount, while
+// cards and sheets enter with keyframe animations (lift-in 0.5 s, slides,
+// fades). On a busy box a scan can sample a card still mid-entrance, at an
+// opacity below 1, and axe then reports a transient color-contrast failure
+// (seen once on "fan spin (install nudge, iPhone guide)"). Wait for every
+// finite animation to finish first; infinite ambient loops (the glow pulse,
+// floats, shimmers) never carry text and are left running. Bounded so a stuck
+// animation cannot hang the scan.
+async function settleAnimations(page) {
+  await page.evaluate(() => Promise.race([
+    Promise.all(document.getAnimations()
+      .filter((a) => { const t = a.effect?.getTiming?.(); return !t || t.iterations !== Infinity; })
+      .map((a) => a.finished.catch(() => {}))),
+    new Promise((resolve) => setTimeout(resolve, 3000)),
+  ]));
+}
+
+async function scan(page, { path, name, prep, cleanup, advisory = [], viewport = DESKTOP }) {
+  await page.setViewportSize(viewport);
+  if (path) await goto(page, path, 1600);
   if (prep) await prep(page);
-  await page.addScriptTag({ content: AXE_SRC });
+  await settleAnimations(page);
+  await injectAxe(page, AXE_SRC);
   const result = await page.evaluate(async () => {
     // WCAG 2 A & AA.
     return await window.axe.run(document, {
       runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] },
     });
   });
+  if (cleanup) await cleanup(page);
   const adv = new Set(advisory);
   return { name, violations: result.violations, advisory: adv };
 }
@@ -63,13 +526,24 @@ try {
   server = await startServer();
   log(`A11y scan → ${BASE}`);
   browser = await chromium.launch();
-  const page = await browser.newContext({ viewport: { width: 1280, height: 900 } }).then((c) => c.newPage());
+  const page = await browser.newContext({ viewport: DESKTOP }).then((c) => c.newPage());
+  // Every scanned state also proves the app runs under its CSP: any violation
+  // the browser reports fails the scan.
+  const cspViolations = watchCsp(page, []);
 
   let blocking = 0;
   let advisories = 0;
   const lines = ["\n================ ACCESSIBILITY (axe wcag2a/aa) ================"];
-  for (const p of PAGES) {
-    const { name, violations, advisory } = await scan(page, p);
+  // A11Y_ONLY=<substring> scans just the matching states (for reproducing one failure).
+  const only = process.env.A11Y_ONLY;
+  const pages = only ? PAGES.filter((p) => p.name.includes(only)) : PAGES;
+  if (only) log(`A11Y_ONLY="${only}": ${pages.length} of ${PAGES.length} states`);
+  for (const p of pages) {
+    // A `context` entry gets its own browser context (user agent, storage).
+    const own = p.context ? await browser.newContext({ viewport: p.viewport ?? DESKTOP, ...p.context }) : null;
+    const target = own ? await own.newPage() : page;
+    if (own) watchCsp(target, cspViolations);
+    const { name, violations, advisory } = await scan(target, p).finally(() => own?.close());
     // Split serious/critical into blocking vs. advisory (per-page allow-list).
     const block = violations.filter((v) => BLOCKING.has(v.impact) && !advisory.has(v.id));
     const adv = violations.filter((v) => BLOCKING.has(v.impact) && advisory.has(v.id));
@@ -81,9 +555,19 @@ try {
     lines.push(
       `  ${mark} ${name}: blocking=${block.length} advisory=${adv.length} moderate=${moderate} minor=${minor}`
     );
-    for (const v of block) lines.push(`        [${v.impact}] ${v.id} (${v.nodes.length}) — ${v.help}`);
+    for (const v of block) {
+      lines.push(`        [${v.impact}] ${v.id} (${v.nodes.length}) — ${v.help}: ${v.nodes.slice(0, 3).map((n) => n.target.join(" ")).join(" | ")}`);
+      // The element and axe's measurement (for colour-contrast: fg, bg, ratio, expected), so a failure can be placed without a rerun.
+      for (const n of v.nodes.slice(0, 3)) {
+        const data = n.any?.[0]?.data ?? n.all?.[0]?.data;
+        lines.push(`            ${n.html.replace(/\s+/g, " ").slice(0, 160)}${data ? ` → ${JSON.stringify(data).slice(0, 200)}` : ""}`);
+      }
+    }
     for (const v of adv) lines.push(`        [advisory: ${v.impact}] ${v.id} (${v.nodes.length}) — tracked in ROADMAP`);
   }
+  lines.push(`\n================ CSP VIOLATIONS: ${cspViolations.length} ================`);
+  for (const v of cspViolations.slice(0, 20)) lines.push(`  ✗ ${v}`);
+  blocking += cspViolations.length;
   lines.push(
     blocking === 0
       ? `\n✅ A11Y PASSED (no blocking violations${advisories ? `; ${advisories} tracked advisory` : ""})`

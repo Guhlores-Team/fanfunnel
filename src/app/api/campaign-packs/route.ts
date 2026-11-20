@@ -1,9 +1,13 @@
+import type { FocusPackTerms } from "@/lib/data/focusPacks";
 import { NextResponse } from "next/server";
 import { listCampaignPacks, createCampaignPack } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { limitRoute } from "@/lib/api/limit";
 
 // The creator's spin packs. `?campaignId=` scopes to one campaign (plus globals).
 export async function GET(req: Request) {
+  const rateLimited = await limitRoute(req, "campaign-packs:GET");
+  if (rateLimited) return rateLimited;
   const { searchParams } = new URL(req.url);
   const campaignId = searchParams.get("campaignId") ?? undefined;
   const packs = await listCampaignPacks(campaignId);
@@ -12,7 +16,9 @@ export async function GET(req: Request) {
 
 // Create a spin pack.
 export async function POST(req: Request) {
-  const body = await parseJsonBody<{
+  const rateLimited = await limitRoute(req, "campaign-packs:POST");
+  if (rateLimited) return rateLimited;
+  const body = await parseJsonBody<FocusPackTerms & {
     campaignId?: string | null;
     label?: string;
     spins?: number;
@@ -51,6 +57,7 @@ export async function POST(req: Request) {
       amountCents,
       bonusSpins,
       sortOrder,
+      packKind: body.packKind, focusMultiplier: body.focusMultiplier, focusSpins: body.focusSpins, chaseWithin: body.chaseWithin,
     });
     return NextResponse.json({ pack });
   } catch (err) {

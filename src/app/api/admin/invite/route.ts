@@ -1,30 +1,45 @@
 import { NextResponse } from "next/server";
-import { createCreatorAccount } from "@/lib/data";
-import { isAcceptablePassword } from "@/lib/api/password";
+import { inviteCreatorAccount, recordAudit } from "@/lib/data";
+import { requireAdminRoute } from "@/lib/auth/admin";
+import { displayNameInputError } from "@/lib/profileErrors";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
-// Admin creates a creator account directly (no public sign-up needed).
-export async function POST(req: Request) {
-  const body = await parseJsonBody<{
-    email?: string;
-    password?: string;
-    displayName?: string;
-  }>(req);
-  if (body === BAD_REQUEST) return badRequest();
-  const email = (body.email ?? "").trim();
-  const password = body.password ?? "";
-  if (!email || !isAcceptablePassword(password)) {
-    return NextResponse.json(
-      { error: "Email and an 8+ char password containing a letter and a number are required." },
-      { status: 400 }
-    );
-  }
+const EMAIL = /^[^\s@<>,]+@[^\s@<>,]+\.[^\s@<>,]+$/;
 
-  const result = await createCreatorAccount(
-    email,
-    password,
-    (body.displayName ?? "").trim()
-  );
-  if ("error" in result) return errorResponse(result.error);
-  return NextResponse.json(result);
+// Admin "New account" (C8): e-mails the creator an invite. The link signs them
+// in (/auth/callback, token_hash or PKCE) and ends on /set-password, where they
+// choose their own password; the admin never sets or sees one. Admin-only:
+// requireAdminRoute (is_admin(), active, aal2) here, and isActiveAdmin again
+// in the data layer before the service role is used.
+export async function POST(req: Request) {
+  const admin = await requireAdminRoute();
+  if (!admin.ok) return admin.response;
+  const body = await parseJsonBody<{ email?: unknown; displayName?: unknown }>(req);
+  if (body === BAD_REQUEST || body === null || typeof body !== "object") return badRequest();
+  const email = typeof body.email === "string" ? body.email.trim() : "";
+  const displayName = typeof body.displayName === "string" ? body.displayName.trim() : "";
+  if (!EMAIL.test(email) || email.length > 254) return badRequest("invalid_email");
+  // The same rules as Settings: fans see this name. An admin may name a
+  // staff account with a reserved word ("FanFunnel Support"); nobody else can.
+  const nameError = displayName ? displayNameInputError(displayName, { allowReserved: true }) : null;
+  if (nameError) return badRequest(nameError);
+
+  const redirectTo = `${new URL(req.url).origin}/auth/callback?next=/set-password`;
+  const result = await inviteCreatorAccount(email, displayName, redirectTo);
+  if ("error" in result) {
+    // A taken email conflicts with an existing account: 409, same `{ error }`
+    // shape. Every other code keeps statusForError's mapping.
+    if (result.error === "email_taken") {
+      return NextResponse.json({ error: "email_taken" }, { status: 409 });
+    }
+    return errorResponse(result.error);
+  }
+  await recordAudit({
+    actorId: admin.userId,
+    action: "account.create",
+    targetType: "profile",
+    targetId: result.id ?? null,
+    details: { invited: true },
+  });
+  return NextResponse.json({ ok: true });
 }

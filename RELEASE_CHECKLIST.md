@@ -1,102 +1,81 @@
 # FanFunnel — Pre-Release Mega Checklist
 
-Compounded from a 4-angle review (security · correctness/data-layer · performance/resilience · UX/release-readiness). Each item has an **area**, **severity**, **file:line**, and the **action** to take. Work top-down.
+Compounded from a 4-angle review (security · correctness/data-layer · performance/resilience · UX/release-readiness). Each item has an **area**, **severity**, **file:line**, and the **action** to take.
+
+**Status re-checked against the code on 2026-10-27 (branch `ops/golive-hardening`).** A ticked box cites the code or test that closes it. A box left open says what is still missing. Line numbers in the original findings referred to the old single-file `src/lib/data/index.ts`, which has since been split by domain (`src/lib/data/*.ts`).
+
+The ordered go-live runbook (prod migrations, env vars, Supabase auth URLs and email templates, Vercel protection, smoke test, rollback) is in [`docs/GO_LIVE.md`](docs/GO_LIVE.md).
 
 ---
 
-## ✅ Already fixed & verified (no action — context only)
-- **Spin count showed inflated aggregate (18 instead of 3)** — fixed; per-pass is now authoritative. Verified correct & complete, no sibling read bugs. (`index.ts:340-360, 481-483`)
-- **Middleware 504 / `MIDDLEWARE_INVOCATION_TIMEOUT`** — fixed; short-circuits non-auth routes + 3s `getUser` timeout. Verified sound; the dropped routes (`/admin`, `/agency`, `/api/*`, `/spin`) are still protected at the page + data layer, so no auth bypass.
-- **Spin latency** — 3 sequential DB reads → one `Promise.all`. Verified no correctness regression.
-- **Security baseline is strong** — no Blocker/High/Medium issues. RLS, `SECURITY DEFINER` search_path pinning, `claim_spin` guards, admin bootstrap lock, route authz (no IDOR), webhook SSRF guard, secrets handling, server-side age-gate all verified correct.
-
-> **Reminder:** none of the above is live until you **redeploy Vercel** from `main` and **restart the Unhealthy prod DB**.
+## ✅ Already fixed & verified before this list (context only)
+- **Spin count showed inflated aggregate (18 instead of 3)**: fixed. The per-pass balance is authoritative (`src/lib/data/spins.ts` `getFanPass`, "Per-wheel" comment).
+- **Middleware 504 / `MIDDLEWARE_INVOCATION_TIMEOUT`**: fixed. The proxy only runs on session routes (`src/proxy.ts` `matcher`).
+- **Spin latency**: the fan-page reads run in one `Promise.all` (`src/lib/data/spins.ts` `getFanPass`).
+- **Security baseline**: RLS on every table, definer `search_path` pinning, `claim_spin` guards, admin bootstrap lock, route authz, webhook SSRF guard. Guarded by `src/lib/security/*.test.ts` and `scripts/db/schema-drift-check.mjs`.
 
 ---
 
-## 🔴 TIER 1 — BLOCKERS (fix before release)
+## 🔴 TIER 1 — BLOCKERS
 
-- [ ] **[PERF] The 116k req/hr flood: fan chat polls every 3s AND writes on every read.**
-  `src/components/fan/ChatPanel.tsx:150` polls `GET /api/messages/fan` every 3s while open; `getFanMessages` does an `UPDATE messages SET read_at` on **every** GET (`src/lib/data/index.ts:5095`). ~97 open chat tabs = 116k/hr exactly. Also the closed-panel unread check (`ChatPanel.tsx:162`, 12s) runs on every tab.
-  **Action:** poll open chat at **10s** (or use Supabase Realtime like the creator inbox); drop closed-panel check to 30–60s; **gate both behind `document.visibilityState`** so background tabs stop; make the read **idempotent** (only `UPDATE read_at` when there are actually unread creator messages); add a rate limit to the GET.
-
-- [ ] **[UX-fan] No branded 404 / error page — dead/expired links drop the fan on Next.js's bare white "404".**
-  No `not-found.tsx` / `error.tsx` / `global-error.tsx` exists; `spin/[token]`, `c/[slug]`, `share/[shareId]` all `notFound()`.
-  **Action:** add `src/app/not-found.tsx` + `src/app/global-error.tsx` styled like the existing branded empty-state in `verify/[shareId]/page.tsx:27-50` — friendly "this link isn't active, ask your creator for a new one." ~30 min, highest-visibility fan moment.
+- [x] **[PERF] Fan chat poll flood (3s poll + write on every read).** The open chat polls every 10s and the closed-panel unread check every 30s, both paused on hidden tabs with error backoff (`src/components/fan/ChatPanel.tsx` `startPoll({ intervalMs: 10000 …})` and `intervalMs: 30000`; scheduler `src/lib/poll.ts`). The read is idempotent: it only writes `read_at` when unread creator messages exist (`src/lib/data/inbox.ts` "rows we just fetched carry read_at"). The GET is rate-limited per IP (`src/app/api/messages/fan/route.ts` `msgread:`).
+- [x] **[UX-fan] No branded 404 / error page.** `src/app/not-found.tsx` and `src/app/global-error.tsx` exist.
 
 ---
 
 ## 🟠 TIER 2 — HIGH
 
-### Performance (the rest of the flood + amplifiers)
-- [ ] **[PERF] RecentWinsTicker polls every 20s, un-cached public endpoint, 3 round-trips.** `src/components/fan/RecentWinsTicker.tsx:41` → `/api/recent-wins/[creatorId]`.
-  **Action:** it's social proof — staleness is fine. Poll 60s, cache server-side ~30–60s (`Cache-Control: s-maxage=30, stale-while-revalidate` or `unstable_cache`), visibility-gate, add IP rate limit.
-- [ ] **[PERF] Dashboard polls never pause on hidden tabs (abandoned-tab amplifier).** `DashboardClient.tsx:90` (overview, 12s, 8 round-trips/call) and `:118` (metrics, 12s, 6 round-trips); the `visibilitychange` handlers only *add* a refresh, never `clearInterval`. Open inbox thread (`InboxPanel.tsx:337`, 6s) double-fetches and write-on-reads (`index.ts:5170`).
-  **Action:** true `clearInterval` when `document.hidden`, restart on focus; slow overview to 20–30s; cache overview/metrics ~10-15s server-side; kill the inbox `onChanged → loadThreads` double-fetch.
-- [ ] **[PERF] N+1 in campaign stats.** `getCampaignStats` (`index.ts:1117,1153`) runs 2–3 queries **per campaign** (40 campaigns = ~120 queries/request).
-  **Action:** one batched `.in("campaign_id", ids)` query aggregated in JS (or a `group by` SQL); cache 30–60s.
+### Performance
+- [x] **[PERF] RecentWinsTicker polling.** Done differently from the suggestion: it polls every 20s, paused on hidden tabs (`src/components/fan/RecentWinsTicker.tsx` `pollMs: 20000`), the route has an edge cache (`s-maxage=10, stale-while-revalidate=10`) and a per-IP limit (`src/app/api/recent-wins/[creatorId]/route.ts`).
+- [x] **[PERF] Dashboard polls never paused on hidden tabs.** Every dashboard poll goes through `useFetch`/`startPoll`, which stops while the tab is hidden and backs off on errors (`src/lib/poll.ts`; commit 7940e4f "Pause polls on hidden tabs and back off on errors"). Overview/metrics still poll at 12s with no server-side cache: an optional follow-up, not a blocker.
+- [x] **[PERF] N+1 in campaign stats.** One batched `.in("campaign_id", ids)` read per table (`src/lib/data/campaignStats.ts`; test `campaignStats.test.ts`). No extra cache layer.
 
 ### UX / compliance
-- [ ] **[UX-fan] `?debug=1` console is live in production, sticky, can leak the fan's secret token, and ships a "force crash" button.** `src/components/debug/debug.ts:30-59`, mounted at `layout.tsx:42-49`. Off by default & XSS-safe, but no env gate; `localStorage` makes it permanent; captured stack traces can embed `/spin/<token>`.
-  **Action:** gate `resolveDebug()` behind `process.env.NODE_ENV !== "production"` (or admin flag); drop/expire the `localStorage` persistence; redact `/spin/<token>` + query strings from captured text; hide the crash button in prod.
-- [ ] **[UX-fan/compliance] Age-gate forces agreeing to a Terms of Service that has no page and isn't a link.** `SpinClient.tsx:477-481`; no `/terms` or `/privacy` route; landing has no legal footer.
-  **Action:** add minimal `/terms` + `/privacy` pages, link them from the age-gate checkbox and a landing footer. (Adult-content product — real compliance exposure.)
-- [ ] **[UX-creator] Webhook & happy-hour deletion have no confirmation (silent data loss).** `BoostsPanel.tsx:728-733` (webhook) and `:565-570` (happy-hour) — single-click DELETE, swallowed errors.
-  **Action:** apply the two-step inline Confirm/Cancel pattern already used for wheels/fans/campaigns.
-- [ ] **[UX-creator] Editing a historical grant changes a fan's live balance/revenue with no confirm or impact preview.** `FanDetailDrawer.tsx:539-559`.
-  **Action:** show the resulting balance delta inline before saving; confirm when reducing spins.
+- [x] **[UX-fan] `?debug=1` console live in production.** Mounted only when `NEXT_PUBLIC_ENABLE_DEBUG === "1"` (`src/app/layout.tsx`), which is set on Preview only. Legacy `localStorage` flag is cleared, and tokens and query strings are redacted (commit a184514).
+- [~] **[UX-fan/compliance] Terms of Service with no page.** `/terms` and `/privacy` exist and are linked from the age gate (`src/components/SpinClient.tsx`) and the landing footer (`src/app/page.tsx`). **Still open (OWNER):** both are labelled placeholders (`src/components/LegalPage.tsx`) until reviewed legal text is supplied.
+- [x] **[UX-creator] Webhook & happy-hour deletion without confirmation.** Two-step `RemoveConfirm` (`src/components/dashboard/BoostsPanel.tsx`).
+- [x] **[UX-creator] Editing a historical grant with no impact preview.** The fan drawer previews the exact per-pass effect before saving (`src/components/dashboard/FanDetailDrawer.tsx`; test `src/lib/data/grantEditPreview.test.ts`).
 
 ---
 
 ## 🟡 TIER 3 — MEDIUM
 
 ### Correctness / data-layer
-- [ ] **[CORRECTNESS] Referral bonus credits the fan aggregate only, never a pass — strands the spins & breaks the `fans == SUM(passes)` invariant.** `index.ts:992-1018`, `mock.ts:1091-1094`. **Dormant today** (no referral entry point wired), becomes **High** the moment referrals ship.
-  **Action:** credit the bonus onto a specific pass (mirror `grantSpins` at `index.ts:1337-1353`), recompute the aggregate in lockstep; same in mock. **Gate referral launch on this fix.**
-- [ ] **[CORRECTNESS] `editGrant` can desync aggregate vs sum-of-passes on partially-spent grants** (independent `Math.max(0,…)` clamps drift). `index.ts:1262-1301`.
-  **Action:** after updating the pass, recompute `fans.spins_remaining = SUM(fan_passes.spins_remaining)` instead of applying the raw delta separately.
-- [ ] **[CORRECTNESS] Concurrent double-spin reuses the same pre-committed server seed for two spins** (one commitment → two logged spins; outcomes differ only thanks to the nonce). `index.ts:562-635`.
-  **Action:** make claim + seed-rotation atomic — ideally have `claim_spin` read-and-rotate `next_server_seed` in the same statement; or guard the rotation UPDATE on `.eq("next_server_seed", serverSeed)` and retry on 0 rows.
-- [ ] **[CORRECTNESS] Verify page claims "committed before it was revealed" for fallback/legacy spins where the seed was generated at spin time.** `index.ts:614-619` + `verify/[shareId]/page.tsx:98-104`.
-  **Action:** record on the spin row whether the seed was genuinely pre-committed; only show the timing verdict when true, else "seed integrity verified (not pre-committed)."
+- [x] **[CORRECTNESS] Referral bonus credited only the aggregate.** The bonus now lands on a pass (commit 16613ee; test `src/lib/data/referralIntegrity.test.ts`).
+- [x] **[CORRECTNESS] `editGrant` could desync aggregate vs passes.** It adjusts the pass with a compare-and-swap and the aggregate stays `SUM(passes)` via the 0035 trigger (`src/lib/data/fans.ts`; test `src/lib/data/editGrantLedger.test.ts`).
+- [x] **[CORRECTNESS] Concurrent double-spin reused one committed seed.** The seed is consumed with a compare-and-swap (commit 04d95e7; test `src/lib/data/spinSeedRace.test.ts`).
+- [x] **[CORRECTNESS] Verify page over-claimed pre-commitment.** It now states whether the seed was really pre-committed (commits fea3811, d806f65; test `src/lib/data/spinCommitment.test.ts`).
 
 ### Performance / security headers
-- [ ] **[PERF] `/c/[slug]` profile and shared wheel-config reads are needlessly fully dynamic.** `c/[slug]/page.tsx:8` (`force-dynamic`); `getFanPass` re-reads the creator-shared wheel every load.
-  **Action:** ISR the `/c/[slug]` marketing page (`revalidate = 60`); wrap the shared wheel-config read in `unstable_cache` keyed by wheelId, revalidate on edit. (The `/spin/[token]` page must stay dynamic — it's per-fan with writes.)
-- [ ] **[PERF/SEC] Rate limiter is in-process per-instance** (`rateLimit.ts`) — resets on cold start, multiplies by instance count, and most public GETs have no limit.
-  **Action:** move to a shared store (Upstash/Vercel KV) or lean on edge caching; at minimum add per-IP limits to `/api/recent-wins`, `/api/leaderboard`, `/api/messages/fan` (GET).
-- [ ] **[SEC] No security response headers** (`next.config.ts` has no `headers()`). Spin-token can leak via `Referer`; no CSP backstop.
-  **Action:** add `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, and a baseline CSP.
+- [~] **[PERF] `/c/[slug]` and shared wheel-config reads fully dynamic.** `/c/[slug]` is ISR (`src/app/c/[slug]/page.tsx` `revalidate = 60`). **The wheel-config read is deliberately NOT cached.** A cache would need an invalidation on every write path, and some writes cannot trigger one: the stock compare-and-swap on every limited-prize win (`src/lib/data/spins.ts` `takeStockUnit`), the database-side stock refund (`rollback_claimed_spin`, 0038), and direct PostgREST writes that RLS allows the creator's own session to make. A stale prize list on the fan page would show prizes or stock that the live draw no longer has. The page is per-fan and writes on load anyway (seed commitment), so the saving would be one query. See the go-live hardening report.
+- [x] **[PERF/SEC] Rate limiter in-process per instance.** Shared through Upstash Redis when `KV_REST_API_URL`/`KV_REST_API_TOKEN` (or `UPSTASH_REDIS_REST_*`) are set, else falls back to memory (`src/lib/rateLimit.ts` `upstashEnv`). Recent-wins, leaderboard and fan-message GETs have per-IP limits.
+- [x] **[SEC] No security response headers.** `Referrer-Policy`, `X-Content-Type-Options: nosniff` and a CSP are set in `next.config.ts` `securityHeaders`.
 
 ### UX
-- [ ] **[UX-fan] Spin error handling misses `needs_ack` and `no_prizes` → generic "Something went wrong" dead-end.** `SpinClient.tsx:126-138`.
-  **Action:** `needs_ack` → re-open the age gate; `no_prizes` → "This wheel has no prizes available right now — check back soon." (Also: `AgeGate` currently dismisses even if the ack POST fails — handle that.)
-- [ ] **[UX-fan] "Pause my link" (self-exclude) tells the fan to refresh manually; SPIN stays live until they do.** `SafetyMenu.tsx:41`. (Server-side enforcement is correct — client-state gap only.)
-  **Action:** `router.refresh()` / disable spinning immediately on success.
-- [ ] **[UX-creator] Brand-color hex field is unvalidated and applied to the whole dashboard's `--brand`.** `DashboardClient.tsx:2145-2149`.
-  **Action:** validate/normalize via the existing `safeColor()` from `Wheel.tsx` before binding `--brand`.
-- [ ] **[UX-creator] Validation polish:** silent min-2-prize guard (`DashboardClient.tsx:2070`), toast-only form validation (no field highlight / `aria-invalid`), numeric inputs snap on clear (`DashboardClient.tsx:1104,1620`; `BoostsPanel.tsx:522`), "balance odds" writes fractional tickets (`editorHelpers.ts:117-147`).
-  **Action:** disable the ✕ at 2 prizes with a tooltip; add inline `role="alert"`/`aria-invalid`; keep numeric inputs as string state, coerce on submit; round tickets to integers.
+- [x] **[UX-fan] Spin errors `needs_ack` / `no_prizes`.** Mapped to specific messages (`src/components/spinErrors.ts`). The age gate stays open if the acknowledgement fails to save (commit 38c2a75).
+- [x] **[UX-fan] "Pause my link" left SPIN live.** SPIN disables at once through `LinkPauseProvider` (`src/components/fan/SafetyMenu.tsx` `markPaused()`).
+- [x] **[UX-creator] Brand colour unvalidated.** Normalised with `normalizeHex`, and an invalid value blocks save with an accessible error (`src/components/dashboard/WheelEditor.tsx`; commit c52a9b3).
+- [x] **[UX-creator] Validation polish.** Inline accessible errors (commit 7d72b09), whole-number tickets (e44c344), a 0-ticket "can't be won" note (2ca5b3d).
 
 ---
 
 ## 🟢 TIER 4 — LOW / NICE-TO-HAVE
 
-- [ ] **[SEC] Supabase session cookie is `httpOnly:false`** (standard SSR tradeoff). If you don't need the browser client to read the session, pass `cookieOptions: { httpOnly: true }`; otherwise accept as known.
-- [ ] **[SEC] Leaderboard auto-opts fans in on every spin (`index.ts:674`) and exposes per-fan spend (`index.ts:4841`).** Make opt-in an explicit fan action; consider dropping `spentCents` from the public board.
-- [ ] **[SEC] Avatar upload trusts client `content-type`** (`api/account/avatar/route.ts:33`). Sniff magic bytes or set a fixed safe type from the validated extension. (Contained by per-user namespacing.)
-- [ ] **[CORRECTNESS] mock vs real `nonce` basis differs** (`index.ts:615` per-pass-post-decrement vs `mock.ts:964` aggregate-pre). Use one canonical monotonic nonce in both, e.g. `spins_granted_total - spins_remaining`.
-- [ ] **[CORRECTNESS] mock floors fractional happy-hour multiplier** (`mock.ts:2088` `Math.floor`); real accepts 2.5. Drop the floor in mock.
-- [ ] **[CORRECTNESS] `fan_passes.spins_remaining` lacks the `>= 0` CHECK** that `fans.spins_remaining` has (`schema.sql:1705`). Add `check (spins_remaining >= 0)` (and for `spins_granted_total`).
-- [ ] **[PERF] Tighten middleware matcher** (`src/middleware.ts:9`) to only `/dashboard/:path*`, `/login`, `/signup` so it doesn't even invoke on fan/API traffic. (Invocation cost, not DB.)
-- [ ] **[PERF] Add exponential backoff to all poll loops** so a degraded/paused DB makes outages self-limiting instead of sustaining them.
-- [ ] **[UX-fan] Chat sends on every Enter, no Shift+Enter newline** (`ChatPanel.tsx:263`). Newline on Shift+Enter.
+- [x] **[SEC] Session cookie `httpOnly:false`.** Accepted on purpose: the browser client must read the session. `Secure` is added on https (commit 903e9ba; test `src/lib/supabase/cookies.test.ts`).
+- [x] **[SEC] Leaderboard auto opt-in and public spend.** Opt-in is an explicit fan action with a board name, and no spend is in the public payload (commits d10b7d4, 9450894; test `src/lib/data/leaderboardPrivacy.test.ts`).
+- [x] **[SEC] Avatar upload trusted the client content-type.** The type comes from magic bytes (`src/app/api/account/avatar/route.ts` `sniffImageMime`).
+- [x] **[CORRECTNESS] Mock vs real nonce basis differed.** Unified (commit 35b4337; test `src/lib/data/spinParity.test.ts`).
+- [x] **[CORRECTNESS] Mock floored the happy-hour multiplier.** Fixed in the same commit 35b4337.
+- [x] **[CORRECTNESS] `fan_passes` balance CHECKs.** `spins_remaining >= 0` since migration 0039. `spins_granted_total >= 0` (plus `fans.spins_granted_total`, `fans.rl_count`, `prizes.stock`, `prizes.cost_cents`) since migration 0052. Each is validated only when no row violates it; otherwise it is dropped with a WARNING and history is never rewritten (`supabase/migrations/0052_org_rls_and_ledger_checks.sql`; test `src/lib/security/orgRlsLedger0052.test.ts`).
+- [x] **[PERF] Tighten the middleware matcher.** `src/proxy.ts` `matcher` covers only dashboard/admin/agency/auth routes (commit 952eafc).
+- [x] **[PERF] Exponential backoff on poll loops.** `src/lib/poll.ts` (commit 7940e4f).
+- [x] **[UX-fan] Chat sent on every Enter.** Shift+Enter inserts a newline (`src/components/fan/ChatPanel.tsx` `!e.shiftKey`).
 
 ---
 
-## Free-tier survival (do in this order)
-1. **Cache the read-heavy GETs** (`/api/recent-wins`, `/api/leaderboard`, `/api/overview`, `/api/metrics`) + ISR `/c/[slug]` — highest leverage; Vercel's edge absorbs most polling. Likely keeps you on free tier alone.
-2. **Slow + visibility-gate every poll** (Tier 1/2) — cuts baseline ~3–5× and kills the abandoned-tab floor. Add backoff.
-3. **Stop the write-on-read** in chat/inbox — writes are the most expensive op on a nano instance.
-4. **Keep-alive** only fixes cold starts, not load — don't use it as a substitute. After 1–3, let it auto-pause (middleware tolerates a paused DB now).
-5. **Pro tier** only as growth headroom after 1–3 — don't buy a bigger instance to melt instead of fixing polling.
+## Free-tier survival (status)
+1. Cache the read-heavy GETs: recent-wins has an edge cache and `/c/[slug]` is ISR. Overview/metrics are uncached (optional).
+2. Slow down and visibility-gate every poll: done (`src/lib/poll.ts`).
+3. Stop the write-on-read in chat and inbox: done (idempotent `read_at` update).
+4. Keep-alive is not a substitute for 1–3.
+5. Move to the Pro tier only as growth headroom.

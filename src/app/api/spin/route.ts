@@ -1,58 +1,42 @@
 import { NextResponse } from "next/server";
 import { spin } from "@/lib/data";
-import { rateLimitShared } from "@/lib/rateLimit";
-import { clientIp } from "@/lib/api/clientIp";
+import { withFanToken } from "@/lib/api/fanToken";
+import { validSpinIntent } from "@/lib/data/spinAttempts";
+import { withClaimCode } from "@/lib/rewards/claimCode";
+import { statusForError } from "@/lib/api/handler";
 
-// The ONLY place a spin outcome is decided. The browser sends just a token;
-// the server validates spins remaining, picks the weighted prize, logs it,
-// and returns the result for the wheel to animate to.
+/**
+ * RS-02: the HTTP status of a refused spin. A server-side fault (`db_error`,
+ * `unavailable`) or an answer the ledger could not settle (`spin_pending`) is
+ * a 503 with Retry-After, never a 409 the fan would read as "you did this".
+ * The remaining codes keep the shared convention (statusForError), with the
+ * two pre-attempt refusals that are not in it mapped here: no spins / no
+ * prizes are 409 (the page's out-of-spins moment), an unknown link 404.
+ */
+export const RETRY_LATER: ReadonlySet<string> = new Set(["db_error", "unavailable", "spin_pending"]);
+export function spinErrorStatus(code: string): number {
+  if (RETRY_LATER.has(code)) return 503;
+  if (code === "no_spins" || code === "no_prizes") return 409;
+  if (code === "unauthorized") return 401;
+  const shared = statusForError(code);
+  return shared === 400 && code !== "bad_request" && code !== "invalid" ? 409 : shared;
+}
+
+// OPS3-02: each RPC on the spin path aborts after SPIN_RPC_TIMEOUT_MS (an
+// aborted call is reported as spin_pending with the request id kept); this
+// caps the whole invocation, retries included.
+export const maxDuration = 30;
+
 export async function POST(req: Request) {
-  let token: string | undefined;
-  let clientSeed: unknown;
-  try {
-    const body = await req.json();
-    token = body?.token;
-    clientSeed = body?.clientSeed;
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
-  if (!token || typeof token !== "string") {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
-  // clientSeed is optional, but when present it must be a bounded string before
-  // it reaches the provably-fair spin logic.
-  if (clientSeed != null && (typeof clientSeed !== "string" || clientSeed.length > 256)) {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
-
-  // Key on the trusted-proxy client IP (clientIp prefers x-real-ip /
-  // cf-connecting-ip over the spoofable x-forwarded-for) so the per-IP spin
-  // limit on this abuse-sensitive endpoint can't be rotated away by a header.
-  const key = token + ":" + clientIp(req);
-  const { ok, retryAfter } = await rateLimitShared(key, 10, 10000);
-  if (!ok) {
-    return NextResponse.json(
-      { error: "rate_limited" },
-      {
-        status: 429,
-        headers: { "Retry-After": String(Math.ceil(retryAfter / 1000)) },
-      },
-    );
-  }
-
-  const result = await spin(token, clientSeed);
-
-  if ("error" in result) {
-    const status =
-      result.error === "not_found"
-        ? 404
-        : result.error === "rate_limited"
-          ? 429
-          : result.error === "blocked" || result.error === "needs_ack"
-            ? 403
-            : 409;
-    return NextResponse.json({ error: result.error }, { status });
-  }
-
-  return NextResponse.json(result);
+  const response = await withFanToken<{ token?: unknown; requestId?: unknown; clientSeed?: unknown; publishedSeedHash?: unknown }>(req,
+    { scope: "spin", limit: 10, windowMs: 10_000 }, async (token, body) => {
+      // Browser identity must exist BEFORE the request. Never mint an unknown winner identity here.
+      if (body.requestId == null) return NextResponse.json({ error: "upgrade_required" }, { status: 400 });
+      if (!validSpinIntent(body)) return NextResponse.json({ error: "bad_request" }, { status: 400 });
+      const result = await spin(token, body.clientSeed, body.requestId, body.publishedSeedHash);
+      if ("error" in result) return NextResponse.json({ error: result.error }, { status: spinErrorStatus(result.error), ...(RETRY_LATER.has(result.error) ? { headers: { "Retry-After": "5" } } : {}) });
+      return NextResponse.json(withClaimCode(result));
+    });
+  response.headers.set("Cache-Control", "no-store");
+  return response;
 }

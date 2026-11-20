@@ -3,6 +3,9 @@ import { listWheelTemplates, createWheelTemplate } from "@/lib/data";
 import type { WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_ORDER, MAX_WHEEL_PRIZES } from "@/lib/games/wheel/types";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { limitRoute } from "@/lib/api/limit";
+import { MAX_PRIZE_DESCRIPTION, MAX_PRIZE_LABEL } from "@/lib/games/wheel/validate";
+import { publicTextCheck } from "@/lib/publicText";
 
 // Full prize validation, mirroring the wheel save route (src/app/api/wheel
 // /route.ts): rarity drives the odds defaults and imageUrl is rendered, so a
@@ -15,24 +18,33 @@ function prizesValid(prizes: WheelConfig["prizes"]): boolean {
     (p) =>
       p != null &&
       typeof p.label === "string" &&
-      p.label.length <= 120 &&
+      p.label.length <= MAX_PRIZE_LABEL &&
+      publicTextCheck(p.label, { field: "prizeLabel" }).ok &&
+      (p.description == null ||
+        (typeof p.description === "string" &&
+          p.description.length <= MAX_PRIZE_DESCRIPTION &&
+          publicTextCheck(p.description, { field: "prizeDescription" }).ok)) &&
       RARITY_ORDER.includes(p.rarity) &&
       Number.isFinite(p.weight) &&
       p.weight >= 0 &&
       p.weight <= 1e6 &&
       (p.imageUrl == null ||
-        (typeof p.imageUrl === "string" && /^https?:\/\//i.test(p.imageUrl))),
+        (typeof p.imageUrl === "string" && p.imageUrl.length <= 2048 && /^https:\/\//i.test(p.imageUrl))),
   );
 }
 
 // The creator's saved wheel presets.
-export async function GET() {
+export async function GET(req: Request) {
+  const rateLimited = await limitRoute(req, "templates/wheels:GET");
+  if (rateLimited) return rateLimited;
   const templates = await listWheelTemplates();
   return NextResponse.json({ templates });
 }
 
 // Save a wheel preset, sourced from an existing wheel or a provided config.
 export async function POST(req: Request) {
+  const rateLimited = await limitRoute(req, "templates/wheels:POST");
+  if (rateLimited) return rateLimited;
   const body = await parseJsonBody<{
     name?: string;
     fromWheelId?: string;

@@ -6,6 +6,9 @@ import {
   brandText,
   brandVars,
   DEFAULT_BRAND,
+  APP_BASE,
+  brandUi,
+  checkBrandColor,
 } from "./theme";
 
 let passed = 0;
@@ -31,12 +34,19 @@ const base = parseHex("#0c0a0e")!;
   check("parseHex rejects empty/null", parseHex("") === null && parseHex(null) === null);
 }
 
-// --- readableInk: prefer white, flip to dark only when white is too faint ---
+// --- readableInk: pick the HIGHER-contrast ink (white vs dark #160d12) -------
 {
-  check("light yellow brand -> dark ink", readableInk("#f5d90a") === "#111111");
+  const DARK_INK = "#160d12";
+  check("light yellow brand -> dark ink", readableInk("#f5d90a") === DARK_INK);
   check("deep purple brand -> white ink", readableInk("#4a1d96") === "#ffffff");
-  check("default pink keeps white ink", readableInk(DEFAULT_BRAND) === "#ffffff");
-  check("white brand -> dark ink", readableInk("#ffffff") === "#111111");
+  // The tracked defect: white-on-default-pink is only 3.52:1, so the fix flips
+  // it to dark ink (~6:1, passes AA for normal text).
+  check("default pink -> dark ink (fixes 3.52:1 defect)", readableInk(DEFAULT_BRAND) === DARK_INK);
+  check(
+    "default pink + chosen ink clears AA (>=4.5:1)",
+    contrastRatio(parseHex(DEFAULT_BRAND)!, parseHex(readableInk(DEFAULT_BRAND))!) >= 4.5
+  );
+  check("white brand -> dark ink", readableInk("#ffffff") === DARK_INK);
   check("black brand -> white ink", readableInk("#000000") === "#ffffff");
   check("invalid color falls back readable", readableInk("garbage") === readableInk(DEFAULT_BRAND));
 }
@@ -67,6 +77,23 @@ const base = parseHex("#0c0a0e")!;
   );
   const fallback = brandVars(null) as Record<string, string>;
   check("brandVars falls back to default brand when null", fallback["--brand"] === DEFAULT_BRAND);
+}
+
+{
+  // PA-01: non-text UI in the brand colour must reach 3:1 on the page surface.
+  for (const dark of ["#000000", "#0c0a0e", "#111111"]) {
+    const ui = brandUi(dark);
+    check(`brandUi lifts ${dark} to 3:1 on the base`, contrastRatio(parseHex(ui)!, parseHex(APP_BASE)!) >= 3);
+    const vars = brandVars(dark) as Record<string, string>;
+    check(`brandVars exposes --brand-ui for ${dark}`, vars["--brand-ui"] === ui && vars["--brand"] === dark);
+    check(`the button ink is readable on the painted fill for ${dark}`, vars["--brand-ink"] === readableInk(ui));
+    const verdict = checkBrandColor(dark);
+    check(`checkBrandColor flags ${dark} with a plain reason (a verdict for the hint, not a refusal)`, !verdict.ok && verdict.ratio < 3 && /too dark/.test(verdict.reason ?? "") && verdict.uiColor === ui);
+  }
+  check("brandUi leaves the default pink alone", brandUi(DEFAULT_BRAND) === DEFAULT_BRAND);
+  check("checkBrandColor accepts the default pink", checkBrandColor(DEFAULT_BRAND).ok && checkBrandColor(DEFAULT_BRAND).reason === null);
+  check("checkBrandColor accepts mid grey", checkBrandColor("#808080").ok);
+  check("checkBrandColor does not pass junk", !checkBrandColor("#e").ok);
 }
 
 console.log(`theme.test.ts: ${passed} checks passed`);

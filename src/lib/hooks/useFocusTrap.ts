@@ -17,6 +17,12 @@ export interface FocusTrapOptions {
   initialFocus?: RefObject<HTMLElement | null>;
   /** Restore focus to the previously-focused element on close. Defaults to true. */
   restoreFocus?: boolean;
+  /**
+   * Focus on open without scrolling it into view. For a dialog in a scrollable
+   * overlay whose top must stay visible on a short phone (the win card: its
+   * beat row and prize sit above the primary button).
+   */
+  preventScroll?: boolean;
 }
 
 /**
@@ -35,6 +41,7 @@ export function useFocusTrap<T extends HTMLElement = HTMLDivElement>({
   onEscape,
   initialFocus,
   restoreFocus = true,
+  preventScroll = false,
 }: FocusTrapOptions): RefObject<T | null> {
   const containerRef = useRef<T>(null);
   // Keep onEscape current without re-running the trap effect on every render.
@@ -52,11 +59,11 @@ export function useFocusTrap<T extends HTMLElement = HTMLDivElement>({
     // Move focus in: explicit target, else the first focusable element.
     const focusInitial = () => {
       if (initialFocus?.current) {
-        initialFocus.current.focus();
+        initialFocus.current.focus({ preventScroll });
         return;
       }
       const focusables = container?.querySelectorAll<HTMLElement>(FOCUSABLE);
-      focusables?.[0]?.focus();
+      focusables?.[0]?.focus({ preventScroll });
     };
     focusInitial();
 

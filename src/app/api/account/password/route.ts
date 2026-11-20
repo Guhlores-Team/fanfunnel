@@ -1,9 +1,12 @@
+import { creatorMfaStepUpResponse } from "@/lib/auth/stepUp";
+import { BAD_REQUEST, badRequest, parseJsonBody } from "@/lib/api/handler";
 import { NextResponse } from "next/server";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { supabaseUrl } from "@/lib/supabase/url";
 import { rateLimitOr429 } from "@/lib/api/limit";
 import { isAcceptablePassword } from "@/lib/api/password";
+import { signOutOtherSessions } from "@/lib/auth/sessions";
 
 // Change the signed-in creator's password via Supabase Auth.
 // Security:
@@ -13,6 +16,8 @@ import { isAcceptablePassword } from "@/lib/api/password";
 //     real session cookies.
 //   • Enforces a minimum length and a tight per-user rate limit.
 //   • Never logs or echoes the passwords.
+//   • Afterwards signs the account out everywhere else (WG-16): a password
+//     change is how a creator evicts whoever had the old one.
 export async function POST(req: Request) {
   if (!isSupabaseConfigured()) {
     return NextResponse.json({ error: "demo_mode" }, { status: 400 });
@@ -26,15 +31,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  const step = await creatorMfaStepUpResponse(sb, user);
+  if (step) return step;
+
   const limited = await rateLimitOr429("pwchange:" + user.id, 5, 60 * 60 * 1000);
   if (limited) return limited;
 
-  let body: { currentPassword?: unknown; newPassword?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{ currentPassword?: unknown; newPassword?: unknown }>(req);
+  if (body === BAD_REQUEST) return badRequest();
 
   const currentPassword =
     typeof body.currentPassword === "string" ? body.currentPassword : "";
@@ -67,5 +71,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "update_failed" }, { status: 400 });
   }
 
-  return NextResponse.json({ ok: true });
+  const othersSignedOut = await signOutOtherSessions(sb);
+  return NextResponse.json({ ok: true, othersSignedOut });
 }

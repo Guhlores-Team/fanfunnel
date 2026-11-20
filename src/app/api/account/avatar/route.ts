@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { isSupabaseConfigured, createClient, createServiceClient } from "@/lib/supabase/server";
 import { rateLimitOr429 } from "@/lib/api/limit";
-import { sniffImageMime, EXT_BY_MIME } from "@/lib/api/imageSniff";
+import { trackedCreatorUpload } from "@/lib/storage/work";
+import { processUpload } from "@/lib/creatorTheme/processImage";
 
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 
@@ -17,6 +18,15 @@ export async function POST(req: Request) {
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  // The service upload bypasses RLS. Use the session's server-controlled
+  // active/approval predicate, never editable auth metadata, before any write.
+  try {
+    const { data: active, error } = await sb.rpc("current_user_active");
+    if (error || active !== true) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  } catch {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
 
   // Cap upload frequency per creator to protect storage/compute budget.
   const limited = await rateLimitOr429("avatar:" + user.id, 10, 60_000);
@@ -34,19 +44,25 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "too_large" }, { status: 400 });
 
   const bytes = new Uint8Array(await file.arrayBuffer());
-  // Decide the type from the file's magic bytes, never the client-declared MIME
-  // or extension. Rejects SVG (stored-XSS vector) and any spoofed upload.
-  const mime = sniffImageMime(bytes);
-  if (!mime) return NextResponse.json({ error: "not_image" }, { status: 400 });
+  // Decode/re-encode before registration or upload: EXIF/GPS, appended data,
+  // SVG and magic-prefix spoofs never become public avatar objects.
+  const image = await processUpload(bytes);
+  if ("error" in image) return NextResponse.json({ error: image.error }, { status: 400 });
   // Random, collision-free object name (Date.now() could collide on same-ms
   // uploads and overwrite via upsert:true).
-  const path = `${user.id}/${crypto.randomUUID()}.${EXT_BY_MIME[mime]}`;
+  const path = `${user.id}/${crypto.randomUUID()}.webp`;
 
   const svc = createServiceClient();
-  const { error } = await svc.storage
-    .from("avatars")
-    .upload(path, bytes, { contentType: mime, upsert: true });
-  if (error) return NextResponse.json({ error: "upload_failed" }, { status: 400 });
+  const result = await trackedCreatorUpload(svc, {
+    owner: user.id, bucket: "avatars", path, bytes: image.webp, contentType: "image/webp",
+    authorize: async () => {
+      const eligibility = await sb.rpc("current_user_active");
+      return !eligibility.error && eligibility.data === true;
+    },
+  });
+  if ("error" in result) return NextResponse.json({ error: result.error }, {
+    status: result.error === "forbidden" ? 403 : result.error === "upload_failed" ? 400 : result.error === "storage_cleanup_failed" ? 500 : 503,
+  });
 
   const { data } = svc.storage.from("avatars").getPublicUrl(path);
   return NextResponse.json({ url: data.publicUrl });

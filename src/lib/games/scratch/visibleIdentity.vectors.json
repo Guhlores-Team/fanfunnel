@@ -1,0 +1,202 @@
+[
+  {
+    "input": " \tFAN\r\n",
+    "expected": "fan"
+  },
+  {
+    "input": "\u00a0\uff26\uff21\uff2e\u00a0",
+    "expected": "fan"
+  },
+  {
+    "input": "\u0130",
+    "expected": "\u0130"
+  },
+  {
+    "input": "I\u0307",
+    "expected": "\u0130"
+  },
+  {
+    "input": "i",
+    "expected": "i"
+  },
+  {
+    "input": "I",
+    "expected": "i"
+  },
+  {
+    "input": "\u0131",
+    "expected": "\u0131"
+  },
+  {
+    "input": "\u039f\u03a3",
+    "expected": "\u039f\u03a3"
+  },
+  {
+    "input": "\u03bf\u03c3",
+    "expected": "\u03bf\u03c3"
+  },
+  {
+    "input": "\u03bf\u03c2",
+    "expected": "\u03bf\u03c2"
+  },
+  {
+    "input": "\u00c9",
+    "expected": "\u00c9"
+  },
+  {
+    "input": "\u00e9",
+    "expected": "\u00e9"
+  },
+  {
+    "input": "E\u0301",
+    "expected": "\u00c9"
+  },
+  {
+    "input": "\u212aELVIN",
+    "expected": "kelvin"
+  },
+  {
+    "input": "\ufb00",
+    "expected": "ff"
+  },
+  {
+    "input": "\uff21a",
+    "expected": "aa"
+  },
+  {
+    "input": "\u2600\ufe0f",
+    "expected": "\u2600"
+  },
+  {
+    "input": "\u2600\ufe0e",
+    "expected": "\u2600"
+  },
+  {
+    "input": "\ud83d\udc69\u200d\ud83d\udcbb",
+    "expected": "\ud83d\udc69\ud83d\udcbb"
+  },
+  {
+    "input": "1\ufe0f\u20e3",
+    "expected": "1\u20e3"
+  },
+  {
+    "input": "\ufeff",
+    "expected": ""
+  },
+  {
+    "input": "\ufe0f\u200d",
+    "expected": ""
+  },
+  {
+    "input": "A\ufeffB",
+    "expected": "a\ufeffb"
+  },
+  {
+    "input": "A\u0085",
+    "expected": "a\u0085"
+  },
+  {
+    "input": "\u200bA\u200b",
+    "expected": "\u200ba\u200b"
+  },
+  {
+    "input": "\tA\t",
+    "expected": "a"
+  },
+  {
+    "input": "\nA\n",
+    "expected": "a"
+  },
+  {
+    "input": "\u000bA\u000b",
+    "expected": "a"
+  },
+  {
+    "input": "\fA\f",
+    "expected": "a"
+  },
+  {
+    "input": "\rA\r",
+    "expected": "a"
+  },
+  {
+    "input": " A ",
+    "expected": "a"
+  },
+  {
+    "input": "\u00a0A\u00a0",
+    "expected": "a"
+  },
+  {
+    "input": "\u1680A\u1680",
+    "expected": "a"
+  },
+  {
+    "input": "\u2000A\u2000",
+    "expected": "a"
+  },
+  {
+    "input": "\u2001A\u2001",
+    "expected": "a"
+  },
+  {
+    "input": "\u2002A\u2002",
+    "expected": "a"
+  },
+  {
+    "input": "\u2003A\u2003",
+    "expected": "a"
+  },
+  {
+    "input": "\u2004A\u2004",
+    "expected": "a"
+  },
+  {
+    "input": "\u2005A\u2005",
+    "expected": "a"
+  },
+  {
+    "input": "\u2006A\u2006",
+    "expected": "a"
+  },
+  {
+    "input": "\u2007A\u2007",
+    "expected": "a"
+  },
+  {
+    "input": "\u2008A\u2008",
+    "expected": "a"
+  },
+  {
+    "input": "\u2009A\u2009",
+    "expected": "a"
+  },
+  {
+    "input": "\u200aA\u200a",
+    "expected": "a"
+  },
+  {
+    "input": "\u2028A\u2028",
+    "expected": "a"
+  },
+  {
+    "input": "\u2029A\u2029",
+    "expected": "a"
+  },
+  {
+    "input": "\u202fA\u202f",
+    "expected": "a"
+  },
+  {
+    "input": "\u205fA\u205f",
+    "expected": "a"
+  },
+  {
+    "input": "\u3000A\u3000",
+    "expected": "a"
+  },
+  {
+    "input": "\ufeffA\ufeff",
+    "expected": "a"
+  }
+]

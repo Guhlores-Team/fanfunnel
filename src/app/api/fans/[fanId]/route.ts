@@ -1,16 +1,22 @@
+import { completeReadResponse } from "@/lib/api/completeRead";
 import { NextResponse } from "next/server";
 import { getFanDetail, deleteFan, updateFanMeta } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { limitRoute } from "@/lib/api/limit";
 
 // A single fan account's full detail, for the creator's fan drill-in.
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ fanId: string }> }
 ) {
-  const { fanId } = await params;
-  const detail = await getFanDetail(fanId);
-  if (!detail) return NextResponse.json({ error: "not_found" }, { status: 404 });
-  return NextResponse.json(detail);
+  const rateLimited = await limitRoute(req, "fans/[fanId]:GET");
+  if (rateLimited) return rateLimited;
+  return completeReadResponse(async () => {
+    const { fanId } = await params;
+    const detail = await getFanDetail(fanId);
+    if (!detail) return NextResponse.json({ error: "not_found" }, { status: 404 });
+    return NextResponse.json(detail);
+  });
 }
 
 // Patch creator-applied metadata (notes and/or tags) on a fan account.
@@ -18,6 +24,8 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ fanId: string }> }
 ) {
+  const rateLimited = await limitRoute(req, "fans/[fanId]:PATCH");
+  if (rateLimited) return rateLimited;
   const { fanId } = await params;
 
   const body = await parseJsonBody<{ notes?: string | null; tags?: string[] }>(req);
@@ -65,9 +73,11 @@ export async function PATCH(
 
 // Permanently delete a fan account (cascades its links, grants; anonymizes spins).
 export async function DELETE(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ fanId: string }> }
 ) {
+  const rateLimited = await limitRoute(req, "fans/[fanId]:DELETE");
+  if (rateLimited) return rateLimited;
   const { fanId } = await params;
   const result = await deleteFan(fanId);
   if ("error" in result) return errorResponse(result.error);

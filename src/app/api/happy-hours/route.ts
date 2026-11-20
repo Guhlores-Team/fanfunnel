@@ -1,9 +1,13 @@
+import { MAX_COMBINED_BOOST } from "@/lib/focus/config";
 import { NextResponse } from "next/server";
 import { listHappyHours, createHappyHour } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { limitRoute } from "@/lib/api/limit";
 
 // Happy-hour windows for the creator. `?wheelId=` filters to one wheel.
 export async function GET(req: Request) {
+  const rateLimited = await limitRoute(req, "happy-hours:GET");
+  if (rateLimited) return rateLimited;
   const { searchParams } = new URL(req.url);
   const wheelId = searchParams.get("wheelId") ?? undefined;
   const happyHours = await listHappyHours(wheelId);
@@ -12,19 +16,21 @@ export async function GET(req: Request) {
 
 // Schedule a rare-boost window.
 export async function POST(req: Request) {
+  const rateLimited = await limitRoute(req, "happy-hours:POST");
+  if (rateLimited) return rateLimited;
   const body = await parseJsonBody<{
     wheelId?: string;
     multiplier?: number;
     startsAt?: string;
     endsAt?: string;
   }>(req);
-  if (body === BAD_REQUEST) return badRequest();
+  if (body === BAD_REQUEST || !body || typeof body !== "object") return badRequest();
   if (!body.wheelId || !body.startsAt || !body.endsAt) {
     return badRequest();
   }
 
   const multiplier = Number(body.multiplier ?? 2);
-  if (!Number.isFinite(multiplier) || multiplier < 1 || multiplier > 10) {
+  if (!Number.isFinite(multiplier) || multiplier < 1 || multiplier > MAX_COMBINED_BOOST) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 

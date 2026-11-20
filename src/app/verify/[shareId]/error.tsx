@@ -1,0 +1,24 @@
+"use client";
+
+// OPS3-06: the database failed (not a missing win): say so, with a retry,
+// instead of the 404 an unknown link gets.
+import RouteErrorView from "@/components/RouteErrorView";
+
+export default function VerifyError({
+  error,
+  reset,
+  unstable_retry,
+}: {
+  error: Error & { digest?: string };
+  reset?: () => void;
+  unstable_retry?: () => void;
+}) {
+  return (
+    <RouteErrorView
+      error={error}
+      retry={unstable_retry ?? reset}
+      title="This proof is temporarily unavailable"
+      body={<>We couldn&rsquo;t reach the fairness record for this win just now. Nothing about the win has changed; try again in a moment.</>}
+    />
+  );
+}

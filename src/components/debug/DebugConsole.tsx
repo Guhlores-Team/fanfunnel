@@ -9,7 +9,7 @@ import {
   subscribe,
   type CapturedError,
 } from "./debug";
-import { isSupabaseConfigured } from "@/lib/supabase/client";
+import { isSupabaseConfigured } from "@/lib/supabase/configured";
 
 const KIND_LABEL: Record<CapturedError["kind"], string> = {
   error: "Error",
@@ -191,11 +191,12 @@ export default function DebugConsole() {
   return (
     // Bottom-LEFT so the launcher never sits on top of the app's bottom-right
     // fixed UI (e.g. the fan chat FAB).
-    <div className="fixed bottom-3 left-3 z-[100] font-sans">
+    // Lifted above the phone dashboard tab bar when present (globals.css).
+    <div className="fixed bottom-[calc(0.75rem+var(--ff-bottom-offset,0px))] left-3 z-[100] font-sans">
       {!open ? (
         <button
           onClick={() => setOpen(true)}
-          className="flex items-center gap-2 rounded-full border border-line bg-surface/95 px-3 py-2 text-xs font-semibold text-ink shadow-2xl backdrop-blur transition hover:border-[var(--brand)]"
+          className="flex items-center gap-2 rounded-full border border-line bg-surface/95 px-3 py-2 text-xs font-semibold text-ink shadow-2xl backdrop-blur transition hover:border-[var(--brand-ui)]"
           aria-label="Open debug console"
         >
           <span aria-hidden>🐞</span>
@@ -271,7 +272,7 @@ export default function DebugConsole() {
                       </p>
                     )}
                     {e.stack && (
-                      <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-base/60 p-2 text-[11px] leading-relaxed text-muted">
+                      <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-canvas/60 p-2 text-[11px] leading-relaxed text-muted">
                         {e.stack}
                       </pre>
                     )}

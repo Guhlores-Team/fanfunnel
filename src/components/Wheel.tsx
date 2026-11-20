@@ -1,17 +1,28 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Prize } from "@/lib/games/wheel/types";
-import { RARITY_COLORS } from "@/lib/games/wheel/types";
+import type { PublicPrize } from "@/lib/games/wheel/types";
+import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
 import { playTick, haptic, prefersReducedMotion } from "@/lib/sound";
+import { brandUi } from "@/lib/theme";
+import { landingIndex } from "@/components/fan/wheelLanding";
+import {
+  SPIN_MS,
+  REDUCED_SPIN_MS,
+  spinDurationMs,
+  nearStopAtMs,
+  type RevealTierConfig,
+} from "@/components/reveal/revealTiers";
 
 export interface WheelResult {
   index: number;
+  /** RF-01: the wheel lands on this prize wherever it sits in the list it draws. */
+  prizeId?: string | null;
   nonce: number; // changes each spin so the same index can replay
 }
 
 interface WheelProps {
-  prizes: Prize[];
+  prizes: PublicPrize[];
   brandColor?: string;
   /**
    * Phase 9 (#11): per-wheel color for the prize-label text rendered on the
@@ -26,10 +37,21 @@ interface WheelProps {
   onSpinEnd?: () => void;
   size?: number;
   muted?: boolean;
+  /**
+   * RM-1: the reveal tier of the result being animated (from the rarity the
+   * server already returned). A build-up tier stretches the stop and fires
+   * onNearStop; without one the spin is the plain 4.4s.
+   */
+  tier?: RevealTierConfig | null;
+  /** Fires once, ~1s before the stop, for build-up tiers only. */
+  onNearStop?: () => void;
+  /** Set true mid-spin to snap straight to the result (tap-to-skip). */
+  skip?: boolean;
+  /** After the stop: dim the other slices and outline the winner. */
+  spotlight?: { index: number; prizeId?: string | null; dim: number } | null;
 }
 
 const TWO_PI = Math.PI * 2;
-const SPIN_MS = 4400;
 const EXTRA_TURNS = 6;
 
 // Greedy word-wrap: split into lines that each fit maxWidth at the current font.
@@ -89,7 +111,13 @@ function easeOutQuart(t: number): number {
   return 1 - Math.pow(1 - t, 4);
 }
 
-function segmentColor(p: Prize): string {
+// A longer, slower tail for build-up tiers: the last stretch crawls toward the
+// winning slice so the "is it…?" moment lands before the stop.
+function easeOutQuint(t: number): number {
+  return 1 - Math.pow(1 - t, 5);
+}
+
+function segmentColor(p: PublicPrize): string {
   return p.color ?? RARITY_COLORS[p.rarity] ?? "#6b7280";
 }
 
@@ -136,6 +164,10 @@ export default function Wheel({
   onSpinEnd,
   size = 380,
   muted = false,
+  tier = null,
+  onNearStop,
+  skip = false,
+  spotlight = null,
 }: WheelProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rotationRef = useRef(0);
@@ -144,12 +176,20 @@ export default function Wheel({
   const lastSegRef = useRef<number>(-1);
   const pegRef = useRef<HTMLDivElement>(null);
   const mutedRef = useRef(muted);
+  // Snaps the in-flight spin to its result (set while a spin runs).
+  const finishRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     mutedRef.current = muted;
   }, [muted]);
 
   const [spinning, setSpinning] = useState(false);
+  const spinningRef = useRef(false);
+  // WF-16 / PA-04: what the screen reader hears while the wheel turns and stops.
+  const [status, setStatus] = useState("");
   const seg = prizes.length > 0 ? TWO_PI / prizes.length : TWO_PI;
+  // PA-01: a near-black brand on the dark page would hide the hub and the peg.
+  const uiColor = brandUi(safeColor(brandColor));
+  const spotlightIndex = landingIndex(prizes, spotlight);
 
   function draw(rotation: number) {
     const canvas = canvasRef.current;
@@ -193,7 +233,7 @@ export default function Wheel({
     const angularRoom = seg * textR * 0.82; // tangential room (with edge margin)
     // Guard the label: a prize mid-edit can have an empty/undefined label, and
     // template-literal coercion would paint the string "undefined" on the slice.
-    const labelFor = (p: Prize) =>
+    const labelFor = (p: PublicPrize) =>
       `${p.emoji ? p.emoji + " " : ""}${p.label ?? ""}`.trim();
     const setLabelFont = (f: number) => {
       ctx.font = `600 ${f}px ui-sans-serif, system-ui, sans-serif`;
@@ -302,10 +342,34 @@ export default function Wheel({
       ctx.restore();
     });
 
+    // RM-1 stop spotlight: dim every other slice and outline the winner.
+    if (spotlight && spotlightIndex >= 0) {
+      prizes.forEach((_, i) => {
+        if (i === spotlightIndex || spotlight.dim <= 0) return;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.arc(0, 0, radius, i * seg, i * seg + seg);
+        ctx.closePath();
+        ctx.fillStyle = `rgba(0,0,0,${Math.min(0.8, spotlight.dim)})`;
+        ctx.fill();
+      });
+      const start = spotlightIndex * seg;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, radius - 1.5, start, start + seg);
+      ctx.closePath();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "rgba(255,255,255,0.95)";
+      ctx.shadowColor = "rgba(255,255,255,0.6)";
+      ctx.shadowBlur = 10;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+
     ctx.restore();
 
     // Center hub
-    const hubColor = safeColor(brandColor);
+    const hubColor = uiColor;
     ctx.beginPath();
     ctx.arc(cx, cy, radius * 0.15, 0, TWO_PI);
     ctx.fillStyle = "#fff";
@@ -327,16 +391,30 @@ export default function Wheel({
   }
 
   useEffect(() => {
-    draw(rotationRef.current);
+    // PA-02: mid-spin the face is painted once, upright, and turned by CSS.
+    draw(spinningRef.current ? 0 : rotationRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prizes, brandColor, labelColor, labelSize, size]);
+  }, [prizes, brandColor, labelColor, labelSize, size, spotlightIndex, spotlight?.dim]);
+
+  // Tap-to-skip: jump the running spin to its final frame.
+  useEffect(() => {
+    if (skip) finishRef.current?.();
+  }, [skip]);
 
   useEffect(() => {
     if (!result || result.nonce === lastNonce.current) return;
     if (prizes.length === 0) return;
     lastNonce.current = result.nonce;
 
-    const target = result.index;
+    // RF-01: land on the prize by id in the list this wheel is drawing.
+    const target = landingIndex(prizes, result);
+    if (target < 0) {
+      // The won prize is not on this wheel at all (the page will refresh):
+      // the card still opens; nothing to animate.
+      onSpinEnd?.();
+      return;
+    }
+    const landedLabel = `${prizes[target].emoji ? prizes[target].emoji + " " : ""}${prizes[target].label}`;
     const center = target * seg + seg / 2;
     const base = rotationRef.current;
     let delta = (-Math.PI / 2 - center - base) % TWO_PI;
@@ -345,6 +423,7 @@ export default function Wheel({
 
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: start spin in response to a new result prop
     setSpinning(true);
+    setStatus("Spinning… your prize is coming.");
 
     // Respect reduced-motion: jump to result with a short fade instead.
     if (prefersReducedMotion()) {
@@ -352,19 +431,58 @@ export default function Wheel({
       draw(rotationRef.current);
       const t = setTimeout(() => {
         setSpinning(false);
+        setStatus(`Landed on ${landedLabel}.`);
         onSpinEnd?.();
-      }, 400);
+      }, REDUCED_SPIN_MS);
       return () => clearTimeout(t);
     }
 
+    // PA-02: paint the face once (upright labels at rotation 0) and let the
+    // compositor turn the canvas; the per-frame work was N gradients and N
+    // shadowed labels on a ~1100² device-pixel canvas (~20 fps on a 4× slower
+    // phone). The exact landing is unchanged: the same final rotation is
+    // painted properly, with upright labels and the spotlight, at the stop.
+    const canvas = canvasRef.current;
+    spinningRef.current = true;
+    draw(0);
+    if (canvas) { canvas.style.willChange = "transform"; canvas.style.transform = `rotate(${base}rad)`; }
+    const turnTo = (rotation: number) => { if (canvas) canvas.style.transform = `rotate(${rotation}rad)`; };
+
     const startTime = performance.now();
     lastSegRef.current = segmentAtPointer(base);
+    const duration = tier ? spinDurationMs(tier) : SPIN_MS;
+    const nearStopAt = tier ? nearStopAtMs(tier) : null;
+    const ease = tier && tier.extraMs > 0 ? easeOutQuint : easeOutQuart;
+    let nearStopFired = false;
+    let done = false;
+
+    const finish = () => {
+      if (done) return;
+      done = true;
+      finishRef.current = null;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rotationRef.current = finalRotation % TWO_PI;
+      spinningRef.current = false;
+      if (canvas) { canvas.style.transform = ""; canvas.style.willChange = ""; }
+      draw(rotationRef.current);
+      setSpinning(false);
+      setStatus(`Landed on ${landedLabel}.`);
+      if (!mutedRef.current) haptic([0, 30, 40, 60]);
+      onSpinEnd?.();
+    };
+    finishRef.current = finish;
 
     const tick = (now: number) => {
-      const t = Math.min(1, (now - startTime) / SPIN_MS);
-      const eased = easeOutQuart(t);
+      if (done) return;
+      const elapsed = now - startTime;
+      const t = Math.min(1, elapsed / duration);
+      const eased = ease(t);
+      if (!nearStopFired && nearStopAt != null && elapsed >= nearStopAt) {
+        nearStopFired = true;
+        onNearStop?.();
+      }
       rotationRef.current = base + (finalRotation - base) * eased;
-      draw(rotationRef.current);
+      turnTo(rotationRef.current);
 
       const segNow = segmentAtPointer(rotationRef.current);
       if (segNow !== lastSegRef.current) {
@@ -383,29 +501,34 @@ export default function Wheel({
       if (t < 1) {
         rafRef.current = requestAnimationFrame(tick);
       } else {
-        rotationRef.current = finalRotation % TWO_PI;
-        setSpinning(false);
-        haptic([0, 30, 40, 60]);
-        onSpinEnd?.();
+        finish();
       }
     };
     rafRef.current = requestAnimationFrame(tick);
 
     return () => {
+      done = true;
+      finishRef.current = null;
+      spinningRef.current = false;
+      if (canvas) { canvas.style.transform = ""; canvas.style.willChange = ""; }
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result]);
 
+  // PA-10: the rarity of every prize is in the wheel's name, not only its colour.
+  const wheelName = `Prize wheel with ${prizes.length} prizes: ${prizes.map((p) => `${p.label} (${RARITY_LABEL[p.rarity] ?? p.rarity})`).join(", ")}`;
+
   return (
     <div
       className="relative select-none"
-      style={{ width: size, height: size }}
-      aria-live="polite"
+      // RF-11: the first paint fits a 320px phone before the measured size lands.
+      style={{ width: size, maxWidth: "calc(100vw - 48px)", aspectRatio: "1 / 1" }}
       aria-busy={spinning}
       role="img"
-      aria-label={`Prize wheel with ${prizes.length} prizes`}
+      aria-label={wheelName}
     >
+      <p className="sr-only" role="status" aria-live="polite" data-testid="wheel-status">{status}</p>
       {/* Ticker peg */}
       <div
         ref={pegRef}
@@ -418,14 +541,14 @@ export default function Wheel({
             height: 0,
             borderLeft: "15px solid transparent",
             borderRight: "15px solid transparent",
-            borderTop: `28px solid ${safeColor(brandColor)}`,
+            borderTop: `28px solid ${uiColor}`,
             filter: "drop-shadow(0 2px 3px rgba(0,0,0,0.4))",
           }}
         />
       </div>
       <canvas
         ref={canvasRef}
-        style={{ width: size, height: size }}
+        style={{ width: "100%", height: "auto", aspectRatio: "1 / 1" }}
         className="rounded-full shadow-2xl"
       />
     </div>

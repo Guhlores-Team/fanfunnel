@@ -13,6 +13,9 @@
 // RNG entropy: outcome floats are drawn directly from SHA-256 blocks of
 // `serverSeed:clientSeed:nonce:block` — the full 256 bits per block, not a
 // 32-bit fold.
+//
+// v3 (./fairnessV3.ts) also mixes the hash of the spin's prize-pool snapshot
+// into every block, so the odds used are inside the derivation too.
 
 /** 32 random bytes as a 64-char lowercase hex string. */
 export function randomSeedHex(): string {
@@ -74,25 +77,17 @@ export function makeRng(serverSeed: string, nonce: number): () => number {
 const FAIR_RNG_BLOCKS = 8;
 
 /**
- * Commit-reveal RNG for a spin. Floats come straight from SHA-256 blocks of
- * `serverSeed:clientSeed:nonce:blockIndex` (4 bytes big-endian per float, so 8
- * floats per block — 64 precomputed, far more than a pick ever consumes).
- * Fully deterministic and independently re-derivable by anyone holding the
- * revealed seed, the client seed, and the nonce. If the pool is ever exhausted
- * it falls back to a mulberry32 seeded from the final block — still
- * deterministic, so verification never breaks.
+ * Floats drawn straight from SHA-256 blocks of `${prefix}:${blockIndex}` (4
+ * bytes big-endian per float, so 8 floats per block — 64 precomputed, far more
+ * than a pick ever consumes). If the pool is ever exhausted it falls back to a
+ * mulberry32 seeded from the final block — still deterministic, so
+ * verification never breaks.
  */
-export async function makeFairRng(
-  serverSeed: string,
-  clientSeed: string,
-  nonce: number
-): Promise<() => number> {
+async function sha256BlockRng(prefix: string): Promise<() => number> {
   const floats: number[] = [];
   let lastBlockHex = "";
   for (let block = 0; block < FAIR_RNG_BLOCKS; block++) {
-    const bytes = await sha256Bytes(
-      `${serverSeed}:${clientSeed}:${nonce}:${block}`
-    );
+    const bytes = await sha256Bytes(`${prefix}:${block}`);
     lastBlockHex = Array.from(bytes)
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("");
@@ -106,6 +101,36 @@ export async function makeFairRng(
   let cursor = 0;
   const fallback = mulberry32(xfnv1a(lastBlockHex));
   return () => (cursor < floats.length ? floats[cursor++] : fallback());
+}
+
+/**
+ * Commit-reveal RNG for a v2 spin: blocks of
+ * `serverSeed:clientSeed:nonce:blockIndex`. Fully deterministic and
+ * independently re-derivable by anyone holding the revealed seed, the client
+ * seed, and the nonce.
+ */
+export async function makeFairRng(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number
+): Promise<() => number> {
+  return sha256BlockRng(`${serverSeed}:${clientSeed}:${nonce}`);
+}
+
+/**
+ * Fairness v3 RNG: blocks of `serverSeed:clientSeed:nonce:poolHash:blockIndex`.
+ * `poolHash` is the SHA-256 of the spin's canonical prize-pool snapshot
+ * (./fairnessV3.ts), so the odds are part of the derivation: changing a single
+ * ticket changes every float, and a recorded result only replays against the
+ * exact odds that were recorded.
+ */
+export async function makeFairRngV3(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number,
+  poolHash: string
+): Promise<() => number> {
+  return sha256BlockRng(`${serverSeed}:${clientSeed}:${nonce}:${poolHash}`);
 }
 
 /** Server-side sanity bound for client seeds (hex-ish, bounded length). */

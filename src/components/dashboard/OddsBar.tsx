@@ -12,7 +12,7 @@ export function OddsBar({
   odds: Map<string, number>;
 }) {
   return (
-    <div className="flex h-3 w-full overflow-hidden rounded-full">
+    <div className="flex h-3.5 w-full overflow-hidden rounded-md [background:var(--s2)]">
       {prizes.map((p) => {
         const pct = odds.get(p.id) ?? 0;
         const label = `${p.label}: ${pct.toFixed(1)}%`;
@@ -22,6 +22,7 @@ export function OddsBar({
             // role="img" so the aria-label is permitted (a bare <div> has no
             // role that supports a name → axe "aria-prohibited-attr").
             role="img"
+            className="transition-[width] duration-200 ease-out"
             style={{
               width: `${pct}%`,
               backgroundColor: p.color ?? RARITY_COLORS[p.rarity],

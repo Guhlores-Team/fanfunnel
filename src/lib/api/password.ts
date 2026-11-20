@@ -11,3 +11,6 @@ export function isAcceptablePassword(pw: unknown): pw is string {
   if (pw.length < MIN_PASSWORD_LENGTH || pw.length > MAX_PASSWORD_LENGTH) return false;
   return /[A-Za-z]/.test(pw) && /[0-9]/.test(pw);
 }
+
+/** The one wording for the rule above (sign-up, reset, set-password, Settings, admin). */
+export const PASSWORD_RULE_MESSAGE = `Password needs ${MIN_PASSWORD_LENGTH}+ characters with a letter and a number.`;

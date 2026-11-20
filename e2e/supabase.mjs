@@ -14,10 +14,12 @@
 // been applied.
 
 import { createClient } from "@supabase/supabase-js";
+import { requireTestProject, createFixturePass, commitSinglePrizeFixture, FIXTURE_TERMS_VERSION } from "./economic-fixtures.mjs";
 import { log, requireSupabaseEnvOrExit } from "./supabase-env.mjs";
 
 // Resolve + validate config (skips/exits with clear diagnostics if missing/bad).
 const { URL, ANON, SERVICE } = requireSupabaseEnvOrExit();
+requireTestProject(URL);
 
 // ---- tiny assert/report (self-contained; no playwright import) -------------
 const results = [];
@@ -38,6 +40,40 @@ function assert(cond, msg) {
 const admin = createClient(URL, SERVICE, { auth: { persistSession: false } });
 const rand = Math.random().toString(36).slice(2, 8);
 const users = []; // { id, email, password, client }
+// Every e2e script's throwaway users (this one, login-ui, spin-integrity).
+const TEST_EMAIL = /^e2e-[^@]*@fanfunnel\.test$/i;
+const STALE_MS = 60 * 60 * 1000;
+
+// Delete e2e users left behind by a run that was killed before its `finally`
+// (e.g. a cancelled CI job). Only old ones, so a concurrent run's users are
+// never touched.
+async function sweepStaleUsers() {
+  const cutoff = Date.now() - STALE_MS;
+  const stale = [];
+  for (let page = 1; ; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) {
+      log("⚠ Skipping stale-user sweep — listUsers: " + error.message);
+      return;
+    }
+    const list = data?.users ?? [];
+    for (const u of list) {
+      if (u.email && TEST_EMAIL.test(u.email) && Date.parse(u.created_at) < cutoff) stale.push(u.id);
+    }
+    if (list.length < 1000) break;
+  }
+  let swept = 0;
+  for (const id of stale) {
+    try {
+      const { error } = await admin.auth.admin.deleteUser(id);
+      if (error) throw error;
+      swept++;
+    } catch (e) {
+      log(`⚠ Could not sweep stale test user ${id} — ${e?.message ?? e}`);
+    }
+  }
+  if (swept) log(`Swept ${swept} stale e2e user(s) from earlier killed runs.`);
+}
 
 async function makeCreator(tag) {
   const email = `e2e-${tag}-${rand}@fanfunnel.test`;
@@ -49,6 +85,9 @@ async function makeCreator(tag) {
   });
   if (error) throw new Error(`createUser(${tag}): ${error.message}`);
   const id = data.user.id;
+  // Register for cleanup before anything below can throw.
+  const rec = { id, email, password, client: null, role: null };
+  users.push(rec);
 
   // handle_new_user runs in the same txn as the auth insert, but poll briefly
   // in case of replication lag before asserting the profile exists.
@@ -67,28 +106,44 @@ async function makeCreator(tag) {
   }
   if (!role) throw new Error(`profile row for ${tag} was never created`);
 
+  // Positive business tests model a reviewed creator, not a pending signup.
+  const { data: approved, error: approvalErr } = await admin
+    .from("profiles")
+    .update({ approval_status: "approved", is_active: true })
+    .eq("id", id)
+    .select("id")
+    .single();
+  if (approvalErr || !approved) throw new Error(`approve(${tag}): ${approvalErr?.message ?? "no profile"}`);
+
   const client = createClient(URL, ANON, { auth: { persistSession: false } });
   const { error: signInErr } = await client.auth.signInWithPassword({ email, password });
   if (signInErr) throw new Error(`signIn(${tag}): ${signInErr.message}`);
 
-  const rec = { id, email, password, client, role };
-  users.push(rec);
+  rec.client = client;
+  rec.role = role;
   return rec;
 }
 
+/** Delete this run's users (cascades profile + owned rows). Returns false if
+ *  any delete failed, so the run fails instead of silently leaking users. */
 async function cleanup() {
+  let ok = true;
   for (const u of users) {
     try {
-      await admin.auth.admin.deleteUser(u.id); // cascades profile + owned rows
-    } catch {
-      /* best effort */
+      const { error } = await admin.auth.admin.deleteUser(u.id);
+      if (error) throw error;
+    } catch (e) {
+      ok = false;
+      log(`✗ CLEANUP FAILED: could not delete test user ${u.email} (${u.id}) — ${e?.message ?? e}`);
     }
   }
+  return ok;
 }
 
 let exitCode = 1;
 try {
   log(`Supabase integration tests → ${URL}`);
+  await sweepStaleUsers();
 
   let A, B, wheelId;
 
@@ -97,6 +152,24 @@ try {
     B = await makeCreator("b");
     assert(A.role === "creator" && B.role === "creator", `both are creators (got ${A?.role}/${B?.role})`);
   });
+
+  for (const approval of ["pending", "rejected"]) {
+    await step(`${approval} creator cannot bypass approval with direct business writes`, async () => {
+      const { error: fixtureError } = await admin.from("profiles").update({ approval_status: approval }).eq("id", A.id);
+      assert(!fixtureError, `set approval fixture: ${fixtureError?.message}`);
+      try {
+        const noWheel = await A.client.from("wheels").insert({ creator_id: A.id, title: "unapproved wheel" }).select("id");
+        assert(!!noWheel.error && (noWheel.data?.length ?? 0) === 0, "unapproved creator cannot insert a wheel");
+        const noOrg = await A.client.rpc("org_create", { p_name: "unapproved agency" });
+        assert(!!noOrg.error, "unapproved creator cannot create an agency");
+        const noImport = await A.client.rpc("import_fans", { p_rows: [] });
+        assert(!!noImport.error, "unapproved creator cannot call the business import RPC");
+      } finally {
+        const { error: restoreError } = await admin.from("profiles").update({ approval_status: "approved" }).eq("id", A.id);
+        assert(!restoreError, `restore approval fixture: ${restoreError?.message}`);
+      }
+    });
+  }
 
   await step("creator A can insert its own wheel (RLS write)", async () => {
     const { data, error } = await A.client
@@ -174,32 +247,14 @@ try {
       .select("id")
       .single();
     assert(!pErr, `seed prize failed: ${pErr?.message}`);
-    const { data: fan, error: fErr } = await admin
-      .from("fans")
-      .insert({ creator_id: A.id, display_name: "A's spin fan", spins_remaining: 5 })
-      .select("id")
-      .single();
-    assert(!fErr, `seed fan failed: ${fErr?.message}`);
-    const { data: pass, error: passErr } = await admin
-      .from("fan_passes")
-      .insert({ token: `e2e-rls-${rand}`, creator_id: A.id, wheel_id: wheelId, fan_id: fan.id })
-      .select("id")
-      .single();
-    assert(!passErr, `seed fan_pass failed: ${passErr?.message}`);
-    const { error: gErr } = await admin
-      .from("grants")
-      .insert({ creator_id: A.id, fan_id: fan.id, spins: 5, amount_cents: 1000 });
-    assert(!gErr, `seed grant failed: ${gErr?.message}`);
-    const { error: sErr } = await admin.from("spins").insert({
-      fan_pass_id: pass.id,
-      creator_id: A.id,
-      wheel_id: wheelId,
-      fan_id: fan.id,
-      prize_id: prize.id,
-      prize_label: "A's prize",
-      prize_rarity: "common",
-    });
-    assert(!sErr, `seed spin failed: ${sErr?.message}`);
+    const grant = await createFixturePass(admin, A, { wheelId, name: "A's spin fan", spins: 5, amountCents: 1000 });
+    const { error: ackError } = await admin.from("fans").update({ acked_at: new Date().toISOString(), acked_terms_version: FIXTURE_TERMS_VERSION }).eq("id", grant.fanId);
+    assert(!ackError, `ack fixture: ${ackError?.message}`);
+    const outcome = await commitSinglePrizeFixture(admin, grant.token);
+    assert(outcome.status === "committed" && outcome.balance === 4, "real atomic play seeds the private grant/spin chain");
+    assert(outcome.spin.prize_id === prize.id, "atomic fixture records the owned prize");
+    const replay = await commitSinglePrizeFixture(admin, grant.token, { requestId: outcome.requestId });
+    assert(replay.status === "committed" && replay.id === outcome.id && replay.balance === 4, "replayed fixture cannot debit twice");
 
     const { data: bGrants } = await B.client.from("grants").select("id").eq("creator_id", A.id);
     assert((bGrants?.length ?? 0) === 0, "B reads 0 of A's grants");
@@ -242,11 +297,75 @@ try {
     assert(b.onboarding_dismissed === false, "B's onboarding flag is unaffected");
   });
 
+  await step("set_notifications_seen RPC (0043) stamps only the caller's row; direct writes stay blocked", async () => {
+    const { error } = await A.client.rpc("set_notifications_seen");
+    assert(!error, `rpc failed: ${error?.message}`);
+    const { data: a } = await A.client.from("profiles").select("notifications_seen_at").eq("id", A.id).single();
+    assert(a.notifications_seen_at !== null, "A's seen marker set");
+    const { data: b } = await B.client.from("profiles").select("notifications_seen_at").eq("id", B.id).single();
+    assert(b.notifications_seen_at === null, "B's seen marker is unaffected by A's RPC");
+    const { data: upd } = await B.client
+      .from("profiles")
+      .update({ notifications_seen_at: new Date().toISOString() })
+      .eq("id", B.id)
+      .select("id");
+    assert((upd?.length ?? 0) === 0, "a creator can't write the column directly (profiles_update is admin-only)");
+    const anon = createClient(URL, ANON, { auth: { persistSession: false } });
+    const { error: anonErr } = await anon.rpc("set_notifications_seen");
+    assert(anonErr, "anon cannot execute set_notifications_seen");
+  });
+
+  await step("set_pwa_icon_mode RPC (0046) writes only the caller's row; anon and direct writes are refused", async () => {
+    const { error } = await A.client.rpc("set_pwa_icon_mode", { p_mode: "avatar" });
+    assert(!error, `rpc failed: ${error?.message}`);
+    const { data: a } = await A.client.from("profiles").select("pwa_icon_mode").eq("id", A.id).single();
+    assert(a.pwa_icon_mode === "avatar", "A's icon mode set");
+    const { data: b } = await B.client.from("profiles").select("pwa_icon_mode").eq("id", B.id).single();
+    assert(b.pwa_icon_mode === "neutral", "B's icon mode is unaffected (still the neutral default)");
+    const { error: badErr } = await A.client.rpc("set_pwa_icon_mode", { p_mode: "selfie" });
+    assert(badErr, "an invalid mode is refused");
+    const { data: upd } = await A.client.from("profiles").update({ pwa_icon_mode: "avatar" }).eq("id", B.id).select("id");
+    assert((upd?.length ?? 0) === 0, "A can't write B's column directly");
+    const { data: own } = await B.client.from("profiles").update({ pwa_icon_mode: "avatar" }).eq("id", B.id).select("id");
+    assert((own?.length ?? 0) === 0, "B can't write its own column directly either (profiles_update is admin-only)");
+    const anon = createClient(URL, ANON, { auth: { persistSession: false } });
+    const { error: anonErr } = await anon.rpc("set_pwa_icon_mode", { p_mode: "avatar" });
+    assert(anonErr, "anon cannot execute set_pwa_icon_mode");
+    await A.client.rpc("set_pwa_icon_mode", { p_mode: "neutral" });
+  });
+
+  await step("anon cannot execute the self-service setters (0044); the signed-in creator still can", async () => {
+    const anon = createClient(URL, ANON, { auth: { persistSession: false } });
+    for (const [fn, args] of [
+      ["set_display_name", { p_name: "anon" }],
+      ["set_onboarding_dismissed", { p_dismissed: true }],
+      ["set_leaderboard_enabled", { p_enabled: true }],
+      ["set_chat_settings", { p_intro: "x", p_outro: "y" }],
+      ["set_notification_prefs", { p_new_spin: false, p_low_balance: false, p_messages: false }],
+      ["set_public_profile", { p_slug: "anon-probe", p_tip_url: "", p_tagline: "" }],
+      ["set_creator_note", { p_note: "x", p_avatar: "" }],
+    ]) {
+      const { error } = await anon.rpc(fn, args);
+      assert(error, `anon must not execute ${fn}`);
+    }
+    const { error } = await A.client.rpc("set_display_name", { p_name: "Creator A" });
+    assert(!error, `signed-in set_display_name failed: ${error?.message}`);
+  });
+
   await step("creator A cannot self-promote to admin (profiles_update is admin-only)", async () => {
     const { data } = await A.client.from("profiles").update({ role: "admin" }).eq("id", A.id).select("id");
     assert((data?.length ?? 0) === 0, "direct role update is blocked by RLS");
     const { data: a } = await A.client.from("profiles").select("role").eq("id", A.id).single();
     assert(a.role === "creator", "A is still a creator");
+  });
+
+  await step("normal creator is not an admin: is_admin() is false and admin_account_stats returns nothing", async () => {
+    // The dashboard shell shows its Admin section only when checkAdmin() (the
+    // is_admin() RPC) says so, and the admin data RPC is empty for everyone else.
+    const { data: isAdmin, error } = await A.client.rpc("is_admin");
+    assert(!error && isAdmin === false, `is_admin() must be false for a creator (got ${isAdmin}, ${error?.message ?? "no error"})`);
+    const { data: rows } = await A.client.rpc("admin_account_stats");
+    assert(!rows || rows.length === 0, `admin_account_stats returned ${rows?.length ?? 0} rows to a creator (must be 0)`);
   });
 
   await step("suspended creator (is_active=false) cannot write own data (RLS)", async () => {
@@ -300,6 +419,6 @@ try {
   log("Supabase integration harness error: " + (e?.stack || e));
   exitCode = 1;
 } finally {
-  await cleanup();
+  if (!(await cleanup())) exitCode = 1;
   process.exit(exitCode);
 }

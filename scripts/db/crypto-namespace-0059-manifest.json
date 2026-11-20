@@ -1,0 +1,172 @@
+{
+  "version": 1,
+  "migration": "0059",
+  "targetSearchPath": "public, extensions, pg_temp",
+  "functions": [
+    {
+      "owner": "postgres",
+      "language": "plpgsql",
+      "oldConfig": [
+        "search_path=public"
+      ],
+      "signature": "public._create_pass_grant_core(uuid, uuid, uuid, uuid, text, integer, integer, integer, uuid, text, uuid, integer)",
+      "bodySha256": "52f81286baa9ee401d15ff9a7293de9de13bc50ee15dff33bdacf1eace574c26",
+      "serviceExecute": false,
+      "securityDefiner": true
+    },
+    {
+      "owner": "postgres",
+      "language": "plpgsql",
+      "oldConfig": [
+        "search_path=public"
+      ],
+      "signature": "public._grant_focus_pack_core(uuid, uuid, uuid, uuid, uuid, uuid)",
+      "bodySha256": "b806adaa519bd44c035534b8ec723a6beacd2da9ef7317b60fc11088274836fb",
+      "serviceExecute": false,
+      "securityDefiner": true
+    },
+    {
+      "owner": "postgres",
+      "language": "plpgsql",
+      "oldConfig": [
+        "search_path=public"
+      ],
+      "signature": "public._grant_pass_spins_core(uuid, uuid, uuid, uuid, integer, integer, integer, uuid)",
+      "bodySha256": "6e71c8771db3373d0ae9922d4e9b42f01b07b7bb27327d216c660845d9be9e0f",
+      "serviceExecute": false,
+      "securityDefiner": true
+    },
+    {
+      "owner": "postgres",
+      "language": "plpgsql",
+      "oldConfig": [
+        "search_path=public"
+      ],
+      "signature": "public._import_fans_durable_core(uuid, uuid, text, jsonb)",
+      "bodySha256": "1d8f1a5cefed475c6c421b093ad00f9d74ff81e2992f5eb075a52aa07adb0bee",
+      "serviceExecute": false,
+      "securityDefiner": true
+    },
+    {
+      "owner": "postgres",
+      "language": "plpgsql",
+      "oldConfig": [
+        "search_path=public"
+      ],
+      "signature": "public._spin_attempt_context(uuid)",
+      "bodySha256": "6e564825b525d589ba39c8044e4e730e23c38e6074c97fdedced71ee1de608e3",
+      "serviceExecute": false,
+      "securityDefiner": true
+    },
+    {
+      "owner": "postgres",
+      "language": "plpgsql",
+      "oldConfig": [
+        "search_path=public"
+      ],
+      "signature": "public.cancel_spin_attempt(uuid, text, text, text)",
+      "bodySha256": "fd36ef70774370a3a4121ed8c22a140770a94424b945f8b236fb5dd3c6be3ea0",
+      "serviceExecute": true,
+      "securityDefiner": true
+    },
+    {
+      "owner": "postgres",
+      "language": "plpgsql",
+      "oldConfig": [
+        "search_path=public"
+      ],
+      "signature": "public.commit_spin_attempt(uuid, text, text, jsonb, jsonb, jsonb, jsonb)",
+      "bodySha256": "8a8531a93a9e56b5bc6c9b9cdd08f6ebabe0294a74aaded6ce729b37aa16e506",
+      "serviceExecute": true,
+      "securityDefiner": true
+    },
+    {
+      "owner": "postgres",
+      "language": "plpgsql",
+      "oldConfig": [
+        "search_path=public"
+      ],
+      "signature": "public.create_pass_grant(uuid, uuid, uuid, uuid, text, integer, integer, integer, uuid, text, uuid, integer, uuid)",
+      "bodySha256": "08e3538f71a5d561c65eac23862dfe2687b1058a86c948a55a5648eff9173ee1",
+      "serviceExecute": true,
+      "securityDefiner": true
+    },
+    {
+      "owner": "postgres",
+      "language": "plpgsql",
+      "oldConfig": [
+        "search_path=public"
+      ],
+      "signature": "public.edit_pass_grant(uuid, uuid, uuid, jsonb, uuid)",
+      "bodySha256": "c27abe59a5d240121c7def303a51a098b64e441c2ac7fcc6c95737f30972f4ea",
+      "serviceExecute": true,
+      "securityDefiner": true
+    },
+    {
+      "owner": "postgres",
+      "language": "plpgsql",
+      "oldConfig": [
+        "search_path=public"
+      ],
+      "signature": "public.ensure_pass_commitment(text)",
+      "bodySha256": "73112abba2ac507e565620e0dd65624e413ad557f2d822203dcfbe94e761ab75",
+      "serviceExecute": true,
+      "securityDefiner": true
+    },
+    {
+      "owner": "postgres",
+      "language": "plpgsql",
+      "oldConfig": [
+        "search_path=public"
+      ],
+      "signature": "public.get_spin_attempt_status(uuid, text, text)",
+      "bodySha256": "9ec781c9685b3a894cfb07ed314559b2208ed92748d1e214a905d2a6b57ba930",
+      "serviceExecute": true,
+      "securityDefiner": true
+    },
+    {
+      "owner": "postgres",
+      "language": "plpgsql",
+      "oldConfig": [
+        "search_path=public"
+      ],
+      "signature": "public.grant_focus_pack(uuid, uuid, uuid, uuid, uuid, uuid, uuid)",
+      "bodySha256": "d3f2cef61169bbfd0cfba17685e85f4c538c037976bc646f942fd015ce7fcb8f",
+      "serviceExecute": true,
+      "securityDefiner": true
+    },
+    {
+      "owner": "postgres",
+      "language": "plpgsql",
+      "oldConfig": [
+        "search_path=public"
+      ],
+      "signature": "public.grant_pass_spins(uuid, uuid, uuid, uuid, integer, integer, integer, uuid, uuid)",
+      "bodySha256": "ca33ef3249cc3e6e470245082b1ef2ece5aa136625f49a2538a211748445ef8e",
+      "serviceExecute": true,
+      "securityDefiner": true
+    },
+    {
+      "owner": "postgres",
+      "language": "plpgsql",
+      "oldConfig": [
+        "search_path=public"
+      ],
+      "signature": "public.import_fans_durable(uuid, uuid, text, jsonb, uuid)",
+      "bodySha256": "2af66993215c4b2ee83f9c58ae4371b7fb2d3ab3bc7ae492930619eac87bbec5",
+      "serviceExecute": true,
+      "securityDefiner": true
+    },
+    {
+      "owner": "postgres",
+      "language": "plpgsql",
+      "oldConfig": [
+        "search_path=public"
+      ],
+      "signature": "public.prepare_spin_attempt(uuid, text, text)",
+      "bodySha256": "e05ab4b66ec81784fb2a8f9fc407183e246ee5f8363563593397fe0a28565acd",
+      "serviceExecute": true,
+      "securityDefiner": true
+    }
+  ]
+}

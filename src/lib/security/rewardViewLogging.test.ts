@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
+const source=readFileSync(new URL("../../../supabase/migrations/0059_focus_attempt_ledger.sql",import.meta.url),"utf8");
+const logger=source.slice(source.indexOf("create or replace function public.record_fan_reward_views("));
+let checks=0;const check=(v:unknown,label:string)=>{assert.ok(v,label);checks++;};
+check(source.includes("alter table public.spin_rewards alter column views set default 0"),"creating a receipt does not count a plaintext disclosure");
+check(source.includes("alter column last_viewed_at drop not null"),"unviewed receipt has no false view timestamp");
+check(logger.includes("expected>5")&&logger.includes("count(distinct x)"),"one bounded batch has unique reward identities");
+check(logger.includes("if found_count<>expected then return 0"),"all identities authorize before any counter changes");
+check(logger.indexOf("from public.fans where id=p.fan_id for update")<logger.indexOf("update public.spin_rewards"),"logging shares erasure's fan-first lock order");
+check(logger.includes("order by r.spin_id for update of r"),"multi-reward row locks have deterministic order");
+check(logger.includes("s.fan_id=p.fan_id")&&logger.includes("r.erased_at is null"),"logging refuses foreign/erased private rewards");
+check(!logger.includes("break_until"),"a break permits safe existing reward recovery");
+check(logger.includes("revoke execute on function public.record_fan_reward_views(uuid[],text) from public,anon,authenticated"),"batch logger is unavailable to browser roles");
+check(!logger.includes("update public.fan_passes")&&!logger.includes("insert into public.spins"),"logging never spends or reawards a play");
+console.log(`rewardViewLogging.test: ${checks} disclosure boundary, lock and scope guards passed`);
