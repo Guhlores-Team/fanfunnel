@@ -18,7 +18,8 @@ every other branch on a Preview backed by the TEST project. See
 Migrations are applied by CI, not by hand: `.github/workflows/supabase-migrations.yml`
 applies `supabase/migrations/` to **TEST** on every PR (`test` job) and to **LIVE** on merge to
 `main` (`production` job). That workflow needs `SUPABASE_TEST_PROJECT_REF`,
-`SUPABASE_TEST_DB_PASSWORD`, `SUPABASE_TEST_DB_URL` (the `test` job), and
+`SUPABASE_TEST_DB_PASSWORD`, `SUPABASE_TEST_DB_URL`, `SUPABASE_TEST_ACCESS_TOKEN` (a token scoped to
+TEST only, for the type check; all four in the `test` environment), and
 `SUPABASE_PROD_PROJECT_REF`, `SUPABASE_PROD_DB_PASSWORD`, `SUPABASE_ACCESS_TOKEN` (the
 `production` job). The PROD values and the account token belong in the **`production`
 environment's** secrets, not the repository's: a repository secret reaches every same-repo PR

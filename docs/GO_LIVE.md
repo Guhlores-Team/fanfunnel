@@ -55,8 +55,10 @@ These account settings finish it. Do them in this order; none of them needs a co
       **`test`** environment in [GitHub environments](https://github.com/Guhlores-Team/fanfunnel/settings/environments).
       A password with `@`, `:`, `/` or `#` must be percent-encoded. The next PR run's
       `Choose TEST credentials` step must then print `TEST database URL points at snmcrmhgevfqggxdiomu.`
-      and no "Supabase account token used by a PR job" warning. If its type check fails only on
-      blank lines, nothing is wrong; if it fails on a real type, regenerate `src/lib/data/db.types.ts`.
+      and no "Supabase account token used by a PR job" warning. Also add **`SUPABASE_TEST_ACCESS_TOKEN`**
+      to `test`: a [Supabase access token](https://supabase.com/dashboard/account/tokens) with **Project**
+      access to `fanfunnel test` only. The type check reads the hosted generator with it (the local
+      `--db-url` generator emits different types and can never match `src/lib/data/db.types.ts`).
 - [ ] **OWNER** (SUP-1): [GitHub environments](https://github.com/Guhlores-Team/fanfunnel/settings/environments) →
       **`production`**: Required reviewers = you ("Prevent self-review" off, you are the only owner);
       Deployment branches and tags = **Selected branches and tags** → add `main`. Then **Add environment
@@ -66,7 +68,7 @@ These account settings finish it. Do them in this order; none of them needs a co
       Optionally require your review (SUP-6; PR migration runs then wait for your click).
 - [ ] **OWNER** (SC-02, batch 7): same page → **New environment `test-maintenance`**: Required reviewers = you;
       Deployment branches and tags = **Selected** → `dashboard-redesign` only. Add environment secrets
-      `SUPABASE_ACCESS_TOKEN` (the same account token as `production`), `VERCEL_TOKEN` and
+      `SUPABASE_ACCESS_TOKEN` (a token scoped to the TEST project only, like `SUPABASE_TEST_ACCESS_TOKEN`), `VERCEL_TOKEN` and
       `FANFUNNEL_TEST_CRON_SECRET`. The three manual jobs (`test-maintenance`, `preview-lcp`,
       `preview-feature-smoke`) read them from here since batch 7; until the environment exists they
       refuse to run. Why: the account token reaches LIVE, and the old `test` environment handed it to a
@@ -78,8 +80,8 @@ These account settings finish it. Do them in this order; none of them needs a co
       repository-level TEST trio (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
       `SUPABASE_SERVICE_ROLE_KEY`): the `supabase` and `login-ui` jobs use them.
 - [ ] **OWNER** (SUP-1): in [Supabase access tokens](https://supabase.com/dashboard/account/tokens) revoke the
-      token CI used until now and create a new one, stored only in the `production` and `test-maintenance`
-      environment secrets.
+      token CI used until now. New tokens are scoped to one project: the LIVE-only one lives in `production`,
+      the TEST-only one in `test` (`SUPABASE_TEST_ACCESS_TOKEN`) and `test-maintenance`.
 - [ ] **OWNER** (SUP-5): in [Vercel tokens](https://vercel.com/account/settings/tokens) replace the CI
       `VERCEL_TOKEN` with one scoped to the `easy-simple-sites` team with the shortest expiry that covers the
       planned Preview measurements, stored only as the `test-maintenance` environment secret.

@@ -177,12 +177,14 @@ In short, at **[GitHub → Environments](https://github.com/Guhlores-Team/fanfun
 
 1. **`test`** → **Add environment secret** `SUPABASE_TEST_DB_URL`: the TEST **Session pooler** string from
    **[Supabase TEST → Connect](https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu?showConnect=true)**
-   (port 5432) with the TEST database password filled in. Also add `SUPABASE_TEST_PROJECT_REF` and
-   `SUPABASE_TEST_DB_PASSWORD` here. Nothing else: every PR job can reach this environment.
+   (port 5432) with the TEST database password filled in. Also add `SUPABASE_TEST_PROJECT_REF`,
+   `SUPABASE_TEST_DB_PASSWORD` and `SUPABASE_TEST_ACCESS_TOKEN` (a Supabase access token with Project
+   access to `fanfunnel test` only; the type check uses it). Nothing else: every PR job can reach this environment.
 2. **`production`** → Required reviewers = you; Deployment branches = **Selected** → `main`; description
    "Approve only after today's LIVE backup is listed"; add `SUPABASE_PROD_PROJECT_REF`,
-   `SUPABASE_PROD_DB_PASSWORD`, `SUPABASE_ACCESS_TOKEN`. **Where `SUPABASE_ACCESS_TOKEN` lives:** here,
-   and in `test-maintenance` (next line); never as a repository secret and never in `test`.
+   `SUPABASE_PROD_DB_PASSWORD`, `SUPABASE_ACCESS_TOKEN` (scoped to the LIVE project only). **Where
+   `SUPABASE_ACCESS_TOKEN` lives:** here, and a TEST-scoped one in `test-maintenance` (next line); never as
+   a repository secret and never in `test`.
 3. **`test-maintenance`** (new, batch 7) → Required reviewers = you; Deployment branches = **Selected** →
    `dashboard-redesign`; add `SUPABASE_ACCESS_TOKEN`, `VERCEL_TOKEN` and `FANFUNNEL_TEST_CRON_SECRET`.
    The manual TEST jobs read them from here.

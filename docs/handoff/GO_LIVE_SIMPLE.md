@@ -161,20 +161,21 @@ LIVE project = `ttlogfmogcccwiraaoae`. Same clicks as Part 3, with these differe
       and saved (the site never uses it; only the GitHub `production` job does).
 
 **5C. Environments** (open https://github.com/Guhlores-Team/fanfunnel/settings/environments)
-- [ ] 5.7 👤 Click **test** (or **New environment** → name `test` → **Configure**). Under **Environment secrets**
-      click **Add environment secret** three times:
+- [x] 5.7 👤 Click **test** (or **New environment** → name `test` → **Configure**). Under **Environment secrets**
+      click **Add environment secret** four times:
 
 | Name | Value |
 |---|---|
 | `SUPABASE_TEST_DB_URL` | the connection string from 5.5 |
 | `SUPABASE_TEST_PROJECT_REF` | `snmcrmhgevfqggxdiomu` |
 | `SUPABASE_TEST_DB_PASSWORD` | the password from 5.4 |
+| `SUPABASE_TEST_ACCESS_TOKEN` | a new Supabase token `github-ci-test`: **Project** access to only `fanfunnel test`, preset **Full access**, expires Never |
 
-- [ ] 5.8 👤 Back to Environments → **production** (or **New environment** → `production`).
-- [ ] 5.9 👤 Tick **Required reviewers** → add yourself → **Save protection rules**. Leave "Prevent self-review" OFF.
-- [ ] 5.10 👤 **Deployment branches and tags** → **Selected branches and tags** → **Add deployment branch or tag
+- [x] 5.8 👤 Back to Environments → **production** (or **New environment** → `production`).
+- [x] 5.9 👤 Tick **Required reviewers** → add yourself → **Save protection rules**. Leave "Prevent self-review" OFF.
+- [x] 5.10 👤 **Deployment branches and tags** → **Selected branches and tags** → **Add deployment branch or tag
       rule** → type `main` → **Add rule**.
-- [ ] 5.11 👤 Add three environment secrets:
+- [x] 5.11 👤 Add three environment secrets:
 
 | Name | Value |
 |---|---|
@@ -190,8 +191,8 @@ LIVE project = `ttlogfmogcccwiraaoae`. Same clicks as Part 3, with these differe
       **Delete** every token except `github-ci-live`.
 
 **5D. Dependabot needs the TEST trio too**
-- [ ] 5.13 👤 Open https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/settings/api-keys and keep it open.
-- [ ] 5.14 👤 Open https://github.com/Guhlores-Team/fanfunnel/settings/secrets/dependabot → **New repository secret**
+- [x] 5.13 👤 Open https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/settings/api-keys and keep it open.
+- [x] 5.14 👤 Open https://github.com/Guhlores-Team/fanfunnel/settings/secrets/dependabot → **New repository secret**
       three times, with the **TEST** values (never live ones):
 
 | Name | Value (from the TEST Supabase page) |
@@ -201,18 +202,18 @@ LIVE project = `ttlogfmogcccwiraaoae`. Same clicks as Part 3, with these differe
 | `SUPABASE_SERVICE_ROLE_KEY` | the **service_role / secret** key (click Reveal, copy) |
 
 **5E. Branch protection**
-- [ ] 5.15 👤 Open https://github.com/Guhlores-Team/fanfunnel/settings/rules → **New ruleset** → **New branch ruleset**.
-- [ ] 5.16 👤 Name `main`. Enforcement **Active**. **Add target** → **Include by pattern** → `main`.
-- [ ] 5.17 👤 Tick **Restrict deletions**, **Require a pull request before merging**, **Block force pushes**.
-- [ ] 5.18 👤 Tick **Require status checks to pass** → **Add checks** → add `verify`, `schema-drift`, `supabase`,
+- [x] 5.15 👤 Open https://github.com/Guhlores-Team/fanfunnel/settings/rules → **New ruleset** → **New branch ruleset**.
+- [x] 5.16 👤 Name `main`. Enforcement **Active**. **Add target** → **Include by pattern** → `main`.
+- [x] 5.17 👤 Tick **Restrict deletions**, **Require a pull request before merging**, **Block force pushes**.
+- [x] 5.18 👤 Tick **Require status checks to pass** → **Add checks** → add `verify`, `schema-drift`, `supabase`,
       `login-ui`, `test` → **Create**.
-- [ ] 5.19 👤 New ruleset again: name `dashboard-redesign`, target `dashboard-redesign`, tick only
+- [x] 5.19 👤 New ruleset again: name `dashboard-redesign`, target `dashboard-redesign`, tick only
       **Restrict deletions** and **Block force pushes** → **Create**.
 
 **5F. Actions permissions** (open https://github.com/Guhlores-Team/fanfunnel/settings/actions)
-- [ ] 5.20 👤 Tick **Require actions to be pinned to a full-length commit SHA**.
-- [ ] 5.21 👤 **Fork pull request workflows**: **Require approval for all external contributors**.
-- [ ] 5.22 👤 **Workflow permissions**: **Read repository contents and packages permissions**. Untick
+- [x] 5.20 👤 Tick **Require actions to be pinned to a full-length commit SHA**.
+- [x] 5.21 👤 **Fork pull request workflows**: **Require approval for all external contributors**.
+- [x] 5.22 👤 **Workflow permissions**: **Read repository contents and packages permissions**. Untick
       **Allow GitHub Actions to create and approve pull requests**. → **Save**.
 - [ ] 5.23 🤖 Old pull request #42 is unsafe to keep around. Say **"close PR 42"** and I close it and delete its branch.
 - [ ] 5.24 👤 Tell me "GitHub done". I check that the automatic checks still pass with the new settings.
