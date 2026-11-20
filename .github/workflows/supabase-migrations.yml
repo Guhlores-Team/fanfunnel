@@ -214,6 +214,28 @@ jobs:
             exit 1
           fi
           echo "src/lib/data/db.types.ts matches the TEST schema."
+      # Rehearses the PRODUCTION job's connection path on TEST: the pooler URL
+      # built from the Management API with a project-scoped token must list
+      # TEST's migrations (DB-URL path only, so the token is TEST-scoped).
+      - name: Rehearse the PRODUCTION connection path on TEST
+        if: steps.gate.outputs.run == 'true'
+        shell: bash
+        env:
+          MODE: ${{ steps.target.outputs.mode }}
+          POOLER_TOKEN: ${{ steps.target.outputs.mode == 'db-url' && secrets.SUPABASE_TEST_ACCESS_TOKEN || '' }}
+          POOLER_REF: ${{ secrets.SUPABASE_TEST_PROJECT_REF }}
+          POOLER_DB_PASSWORD: ${{ secrets.SUPABASE_TEST_DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ "$MODE" != "db-url" ]; then
+            echo "::warning title=PRODUCTION path not rehearsed::Only the DB-URL path holds a TEST-scoped token."
+            exit 0
+          fi
+          test "$POOLER_REF" = "snmcrmhgevfqggxdiomu"
+          REHEARSAL_URL="$(node scripts/ci/pooler-db-url.mjs)"
+          TEST_DB_URL="$REHEARSAL_URL" node scripts/ci/supabase-test-db-url.mjs
+          supabase migration list --db-url "$REHEARSAL_URL" > "$RUNNER_TEMP/rehearsal.txt"
+          node scripts/ci/verify-migrations-applied.mjs --label TEST-REHEARSAL < "$RUNNER_TEMP/rehearsal.txt"
 
   production:
     # Only a real merge/push to main touches PRODUCTION.
@@ -260,24 +282,32 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/ci/require-prod-backup.mjs
+      # The CLI never sees the access token: CLI 2.122.1 refuses Supabase's
+      # project-scoped token format, so `supabase link` would fail. The
+      # session-pooler URL comes from the Management API instead
+      # (scripts/ci/pooler-db-url.mjs, rehearsed on TEST by the PR job).
       - name: Apply migrations to PRODUCTION
+        shell: bash
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          PROD_PROJECT_REF: ${{ secrets.SUPABASE_PROD_PROJECT_REF }}
-          PROD_DB_PASSWORD: ${{ secrets.SUPABASE_PROD_DB_PASSWORD }}
+          POOLER_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          POOLER_REF: ${{ secrets.SUPABASE_PROD_PROJECT_REF }}
+          POOLER_DB_PASSWORD: ${{ secrets.SUPABASE_PROD_DB_PASSWORD }}
         run: |
-          supabase link --project-ref "$PROD_PROJECT_REF" \
-            --password "$PROD_DB_PASSWORD"
-          supabase db push --password "$PROD_DB_PASSWORD"
+          set -euo pipefail
+          test "$POOLER_REF" = "ttlogfmogcccwiraaoae"
+          PROD_DB_URL="$(node scripts/ci/pooler-db-url.mjs)"
+          supabase db push --db-url "$PROD_DB_URL"
       # Read-back, not trust: the remote history must hold every migration file
       # in this commit and nothing unknown. Failing here keeps Vercel from
       # promoting this commit's Production deployment.
       - name: Verify PRODUCTION migration history matches this commit
         shell: bash
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          PROD_DB_PASSWORD: ${{ secrets.SUPABASE_PROD_DB_PASSWORD }}
+          POOLER_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          POOLER_REF: ${{ secrets.SUPABASE_PROD_PROJECT_REF }}
+          POOLER_DB_PASSWORD: ${{ secrets.SUPABASE_PROD_DB_PASSWORD }}
         run: |
           set -euo pipefail
-          supabase migration list --linked --password "$PROD_DB_PASSWORD" | tee "$RUNNER_TEMP/prod-migrations.txt"
+          PROD_DB_URL="$(node scripts/ci/pooler-db-url.mjs)"
+          supabase migration list --db-url "$PROD_DB_URL" | tee "$RUNNER_TEMP/prod-migrations.txt"
           node scripts/ci/verify-migrations-applied.mjs --label PRODUCTION < "$RUNNER_TEMP/prod-migrations.txt"

@@ -128,7 +128,7 @@ export function auditProductionGate(text) {
   else {
     if (verifyIdx < push_) problems.push("read-back runs before the push");
     if (stepIf(list[verifyIdx])) problems.push("read-back is conditional");
-    if (!list[verifyIdx].includes("set -euo pipefail") || !list[verifyIdx].includes("supabase migration list --linked")) problems.push("read-back can pass on a failed listing");
+    if (!list[verifyIdx].includes("set -euo pipefail") || !list[verifyIdx].includes("supabase migration list --db-url \"$PROD_DB_URL\"")) problems.push("read-back can pass on a failed listing");
   }
   if (/continue-on-error/.test(job)) problems.push("production job may continue on error");
   const node = list.findIndex((s) => s.includes("uses: actions/setup-node@"));

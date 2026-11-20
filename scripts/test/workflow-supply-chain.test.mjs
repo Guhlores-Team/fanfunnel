@@ -124,7 +124,9 @@ check("DB-URL path: types come from the hosted generator with the TEST-scoped to
   typesStep.includes("TEST_TYPES_TOKEN: ${{ steps.target.outputs.mode == 'db-url' && secrets.SUPABASE_TEST_ACCESS_TOKEN || '' }}") &&
   typesStep.includes('node scripts/ci/hosted-types.mjs > "$generated"') &&
   typesStep.includes('test "$TEST_PROJECT_REF" = "snmcrmhgevfqggxdiomu"'));
-check("the TEST-scoped token is used only by the PR job's types step", Object.entries(workflows).every(([n, t]) => (t.match(/secrets\.SUPABASE_TEST_ACCESS_TOKEN/g) ?? []).length === (n === "supabase-migrations.yml" ? 1 : 0)) && !prodJob.includes("SUPABASE_TEST_ACCESS_TOKEN"));
+check("the TEST-scoped token is used only by the PR job (types and the PROD-path rehearsal)", Object.entries(workflows).every(([n, t]) => (t.match(/secrets\.SUPABASE_TEST_ACCESS_TOKEN/g) ?? []).length === (n === "supabase-migrations.yml" ? 2 : 0)) && (testJob.match(/secrets\.SUPABASE_TEST_ACCESS_TOKEN/g) ?? []).length === 2 && testJob.split("secrets.SUPABASE_TEST_ACCESS_TOKEN").slice(0, -1).every((before) => before.endsWith("steps.target.outputs.mode == 'db-url' && ")));
+const rehearsal = testSteps.find((s) => s.includes("Rehearse the PRODUCTION connection path on TEST")) ?? "";
+check("the rehearsal builds the URL like PRODUCTION, guards it as TEST and reads the history back", rehearsal.includes('REHEARSAL_URL="$(node scripts/ci/pooler-db-url.mjs)"') && rehearsal.includes('TEST_DB_URL="$REHEARSAL_URL" node scripts/ci/supabase-test-db-url.mjs') && rehearsal.includes('test "$POOLER_REF" = "snmcrmhgevfqggxdiomu"') && rehearsal.includes("set -euo pipefail"));
 check("PR job serializes TEST runs across PRs without cancelling one in flight", /\n {4}concurrency:\n {6}group: supabase-migrate-test\n {6}cancel-in-progress: false\n/.test(header(testJob)));
 check("workflow-level group never cancels an in-flight PROD run", /\nconcurrency:\n {2}group: supabase-migrate-\$\{\{ github\.ref \}\}\n {2}cancel-in-progress: false\n/.test(mig));
 for (const secret of ["SUPABASE_PROD_DB_PASSWORD", "SUPABASE_PROD_PROJECT_REF"]) {
@@ -132,7 +134,8 @@ for (const secret of ["SUPABASE_PROD_DB_PASSWORD", "SUPABASE_PROD_PROJECT_REF"])
   check(`${secret} is used only by supabase-migrations.yml`, holders.length === 1 && holders[0][0] === "supabase-migrations.yml");
   check(`${secret} appears only in the production job`, !testJob.includes(secret) && mig.split(`secrets.${secret}`).length - 1 === prodJob.split(`secrets.${secret}`).length - 1);
 }
-check("PROD read-back still lists the linked project", prodJob.includes('supabase migration list --linked --password "$PROD_DB_PASSWORD"'));
+check("PROD push and read-back use the pooler URL built from the Management API", prodJob.includes('supabase db push --db-url "$PROD_DB_URL"') && prodJob.includes('supabase migration list --db-url "$PROD_DB_URL" | tee') && (prodJob.match(/PROD_DB_URL="\$\(node scripts\/ci\/pooler-db-url\.mjs\)"/g) ?? []).length === 2 && prodJob.includes('test "$POOLER_REF" = "ttlogfmogcccwiraaoae"'));
+check("the PROD CLI steps never receive the access token under the CLI's own name", steps(prodJob).filter((s) => /supabase (db push|migration list)/.test(code(s))).every((s) => !s.includes("SUPABASE_ACCESS_TOKEN:") && s.includes("POOLER_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}")) && !/supabase link/.test(code(prodJob)));
 
 // ------------------------------------------------------------- SUP-5 Vercel ---
 for (const [name, text] of Object.entries(workflows)) {

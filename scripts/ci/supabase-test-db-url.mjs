@@ -15,7 +15,7 @@ import { pathToFileURL } from "node:url";
 
 export const TEST_REF = "snmcrmhgevfqggxdiomu";
 export const PROD_REF = "ttlogfmogcccwiraaoae";
-const POOLER_HOST = /^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$/;
+export const POOLER_HOST = /^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$/;
 
 /** @param {string | undefined} value @returns {string | null} problem code, or null when it is the TEST database */
 export function testDbUrlProblem(value, ref = TEST_REF) {

@@ -219,11 +219,14 @@ production domain until the named GitHub check on the same commit succeeds.
 - The [migration workflow](../.github/workflows/supabase-migrations.yml) job
   `production` is named **`db-migrations-production`**. It runs on **every**
   push to `main` (the old `paths:` filter is gone, so code-only pushes get the
-  check too), uses the `production` environment, runs `supabase db push`, then
-  re-reads `supabase migration list --linked` and fails unless the remote
+  check too), uses the `production` environment, runs `supabase db push --db-url`, then
+  re-reads `supabase migration list --db-url` and fails unless the remote
   history holds every migration file in that commit and nothing unknown
   ([`scripts/ci/verify-migrations-applied.mjs`](../scripts/ci/verify-migrations-applied.mjs)).
-  The TEST job runs the same read-back on pull requests.
+  The session-pooler URL comes from the Management API with the LIVE-scoped token
+  ([`scripts/ci/pooler-db-url.mjs`](../scripts/ci/pooler-db-url.mjs)); the pinned CLI never sees
+  the token, because CLI 2.122.1 refuses project-scoped tokens and `supabase link` needs one.
+  The TEST job runs the same read-back on pull requests and rehearses this URL path on TEST.
 - With the Deployment Check required, new code is promoted only after that
   job passes; a failed, cancelled or never-approved job leaves the previous
   Production deployment serving. A code-only push is a verified no-op run.
