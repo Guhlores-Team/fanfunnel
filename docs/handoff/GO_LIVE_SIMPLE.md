@@ -148,7 +148,8 @@ LIVE project = `ttlogfmogcccwiraaoae`. Same clicks as Part 3, with these differe
 
 **5B. Gather the values you will need** (put each one in your password manager note "FanFunnel GitHub")
 - [ ] 5.3 👤 **New Supabase access token:** https://supabase.com/dashboard/account/tokens → **Generate new token**
-      → name `github-ci` → copy it into the note. Then click **Revoke** on any older token you no longer use.
+      → name `github-ci` → copy it into the note. **Don't revoke the older token yet:** the automatic tests still
+      use it until step 5.7 is done. You revoke it in step 5.12.
 - [ ] 5.4 👤 **TEST database password:** if you don't have it saved, open
       https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/settings/database → **Reset database password**
       → **Generate a password** → copy it → **Reset password**. (Resetting TEST is safe.)
@@ -184,7 +185,8 @@ LIVE project = `ttlogfmogcccwiraaoae`. Same clicks as Part 3, with these differe
       secrets**, delete (trash icon) only these if they are there: `SUPABASE_PROD_DB_PASSWORD`,
       `SUPABASE_PROD_PROJECT_REF`, `SUPABASE_ACCESS_TOKEN`, `VERCEL_TOKEN`, `FANFUNNEL_TEST_CRON_SECRET`.
       **Keep** `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` and
-      anything starting with `SUPABASE_TEST_`.
+      anything starting with `SUPABASE_TEST_`. Then, at https://supabase.com/dashboard/account/tokens , click
+      **Revoke** on every token except `github-ci`.
 
 **5D. Dependabot needs the TEST trio too**
 - [ ] 5.13 👤 Open https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/settings/api-keys and keep it open.
